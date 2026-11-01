@@ -10,6 +10,10 @@ datos:
     - holidays_events.csv
     - oil.csv
     - transactions.csv
+  # Tablas de referencia: entran completas en la carga inicial.
+  referencias:
+    - stores.csv
+    - holidays_events.csv
 
 rutas:
   modelos: models/
@@ -40,3 +44,36 @@ bandeja:
     fraccion_fechas: 0.15      # fechas de cada fuente que reciben un _rev2
     fraccion_filas: 0.05       # filas con valor erróneo en la versión original
     retraso_extra_dias: 3      # el _rev2 llega estos días después del original
+
+capas:
+  bronze: data/bronze           # ingesta: lo recibido, tal cual, con todas sus revisiones
+  silver: data/silver           # validación: solo las revisiones que pasan las reglas
+  cuarentena: data/cuarentena   # revisiones rechazadas, con sus motivos
+
+validacion:
+  # Esquema por fuente (validado con pandera). Por columna: tipo, nulos permitidos y rango.
+  # Además se valida: sin columnas extra, claves únicas, date == fecha de la partición,
+  # date <= available_at, tiendas conocidas y revision/available_at en cada fila.
+  ventas:
+    claves: [date, store_nbr, family]
+    validar_tiendas: true
+    columnas:
+      id:          {tipo: int64, min: 0}
+      date:        {tipo: str}
+      store_nbr:   {tipo: int64, min: 1}
+      family:      {tipo: str}
+      sales:       {tipo: float64, min: 0}
+      onpromotion: {tipo: int64, min: 0}
+  transacciones:
+    claves: [date, store_nbr]
+    validar_tiendas: true
+    columnas:
+      date:         {tipo: str}
+      store_nbr:    {tipo: int64, min: 1}
+      transactions: {tipo: int64, min: 0}
+  petroleo:
+    claves: [date]
+    validar_tiendas: false
+    columnas:
+      date:       {tipo: str}
+      dcoilwtico: {tipo: float64, nulos: true, min: 0, max: 200}   # puede venir vacío

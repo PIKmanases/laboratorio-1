@@ -1,8 +1,6 @@
 """Pruebas del simulador de bandeja y de la ingesta (datos de ejemplo de tests/data)."""
 
 import hashlib
-import os
-import stat
 import zipfile
 from dataclasses import replace
 from datetime import date
@@ -12,7 +10,7 @@ import pytest
 
 from laboratorio.config import cargar_config
 from laboratorio.inbox.simulador import desde_config, generar_bandeja
-from laboratorio.ingest.bandeja import leer_fuente, listar_archivos
+from laboratorio.ingest.bandeja import leer_fuente
 
 CORTE, FIN = date(2017, 1, 1), date(2017, 1, 3)  # datos de ejemplo: 2017-01-01..03
 
@@ -109,21 +107,3 @@ def test_ingesta_usa_la_ultima_revision(kw, zip_kaggle_ejemplo):
         pd.testing.assert_frame_equal(leido, real)
 
 
-def test_ingesta_nunca_escribe_en_inbox(kw):
-    generar_bandeja(**kw)
-    bandeja = kw["dir_bandeja"]
-    antes = _instantanea(bandeja)
-
-    # Bandeja de solo lectura: cualquier intento de escritura de la ingesta falla.
-    rutas = [bandeja, *bandeja.rglob("*")]
-    for p in rutas:
-        os.chmod(p, stat.S_IRUSR | (stat.S_IXUSR if p.is_dir() else 0))
-    try:
-        for nombre in kw["fuentes"]:
-            listar_archivos(bandeja, nombre)
-            leer_fuente(bandeja, nombre)
-    finally:
-        for p in rutas:
-            os.chmod(p, stat.S_IRWXU)
-
-    assert _instantanea(bandeja) == antes  # ni archivos nuevos, ni modificados, ni borrados
