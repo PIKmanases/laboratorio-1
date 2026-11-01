@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Datos y modelos (versionar con herramientas dedicadas)
+/data/
+/models/
+*.pkl
+*.joblib
+
+# IDE / SO
+.vscode/
+.idea/
+.DS_Store
