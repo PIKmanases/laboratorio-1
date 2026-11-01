@@ -52,3 +52,17 @@ PYTHONPATH=src pytest
 ```
 
 Las pruebas y el CI usan datos pequeños de ejemplo en `tests/data/kaggle/`, nunca `dvc pull`.
+
+## Simulador de la bandeja de entrada
+
+```bash
+PYTHONPATH=src python -m laboratorio.inbox                     # entrega todo
+PYTHONPATH=src python -m laboratorio.inbox --hasta 2017-07-10  # solo lo que llegó hasta ese día
+```
+
+- **Carga histórica inicial:** datos con fecha <= `2017-06-30` (`bandeja.fecha_corte`), leídos del zip.
+- **Bandeja** (`data/inbox/`): un archivo por fecha y fuente, `<fuente>/<fuente>_<fecha>.csv`. Cada fuente tiene su retraso (ventas D+1, transacciones D+2, petróleo D+3).
+- **Revisiones:** en algunas fechas el archivo original trae errores y luego llega `<fuente>_<fecha>_rev2.csv` con los valores corregidos.
+- La ingesta (`laboratorio.ingest.bandeja`) lee la bandeja usando la última revisión de cada fecha y **nunca escribe en ella**.
+
+Todos los parámetros están en `config/pipeline.yaml`. Las decisiones están en `DECISIONES.md`.
