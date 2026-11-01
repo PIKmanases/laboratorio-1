@@ -5,6 +5,7 @@
 - Los parámetros y costos se leen de `config/` (`costs.yaml`, `pipeline.yaml`), nunca se escriben a mano en el código.
 - **Tareas idempotentes.** Ejecutar una tarea dos veces con la misma entrada produce el mismo resultado y no duplica efectos (sobrescribir, no agregar).
 - **Principio as-of.** Todo cálculo para una fecha de corte usa solo información disponible hasta esa fecha; nada de datos futuros (sin fuga de información).
+- **La ingesta nunca escribe en la bandeja** (`data/inbox/`): solo la lee. Solo el simulador (`laboratorio.inbox`) escribe ahí.
 
 ## Datos
 - **Nada de datos en Git.** Datos y modelos se versionan con DVC (`dvc.yaml`); en Git solo van los archivos `.dvc` y `dvc.lock`.

@@ -14,3 +14,29 @@ datos:
 rutas:
   modelos: models/
   pronosticos: forecasts/
+
+bandeja:
+  # Simulador de la bandeja de entrada (src/laboratorio/inbox).
+  dir: data/inbox
+  # Carga histórica inicial: todo dato con fecha <= fecha_corte se lee del zip.
+  # Lo posterior llega por la bandeja, un archivo por fecha y fuente.
+  fecha_corte: "2017-06-30"
+  fecha_fin: "2017-08-15"   # última fecha de train.csv
+  semilla: 42
+  fuentes:
+    ventas:
+      archivo: train.csv
+      columna_valor: sales
+      retraso_dias: 1
+    transacciones:
+      archivo: transactions.csv
+      columna_valor: transactions
+      retraso_dias: 2
+    petroleo:
+      archivo: oil.csv
+      columna_valor: dcoilwtico
+      retraso_dias: 3
+  revisiones:
+    fraccion_fechas: 0.15      # fechas de cada fuente que reciben un _rev2
+    fraccion_filas: 0.05       # filas con valor erróneo en la versión original
+    retraso_extra_dias: 3      # el _rev2 llega estos días después del original
