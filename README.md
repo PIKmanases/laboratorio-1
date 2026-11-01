@@ -32,3 +32,23 @@ Estas carpetas las versiona **DVC** y Git las ignora: en Git solo se commitean l
    ```
 
 El flujo lee los CSV directamente desde el zip (ruta en `config/pipeline.yaml`); no necesita ejecutar comandos de DVC.
+
+### Remoto de DVC
+
+El remoto es una carpeta local de esta máquina, configurada en `.dvc/config.local` (no se versiona):
+
+```bash
+dvc remote add --local -d local ~/dvc-remote/laboratorio-1
+dvc push   # respaldar los datos
+dvc pull   # recuperarlos
+```
+
+En otra máquina, los datos se reproducen descargando el zip de Kaggle al mismo lugar: su md5 debe coincidir con el `.dvc`.
+
+## Pruebas
+
+```bash
+PYTHONPATH=src pytest
+```
+
+Las pruebas y el CI usan datos pequeños de ejemplo en `tests/data/kaggle/`, nunca `dvc pull`.
