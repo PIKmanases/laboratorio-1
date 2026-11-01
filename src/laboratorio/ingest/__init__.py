@@ -1,1 +1,1 @@
-"""Ingesta: lee la bandeja de entrada. Nunca escribe en ella."""
+"""Ingesta: carga histórica y bandeja de entrada -> capa bronze. Nunca escribe en la bandeja."""

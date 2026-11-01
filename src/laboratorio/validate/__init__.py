@@ -1,1 +1,1 @@
-"""Módulo validate."""
+"""Validación: capa bronze -> silver (válidas) o cuarentena (rechazadas)."""

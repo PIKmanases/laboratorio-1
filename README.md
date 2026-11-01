@@ -66,3 +66,27 @@ PYTHONPATH=src python -m laboratorio.inbox --hasta 2017-07-10  # solo lo que lle
 - La ingesta (`laboratorio.ingest.bandeja`) lee la bandeja usando la última revisión de cada fecha y **nunca escribe en ella**.
 
 Todos los parámetros están en `config/pipeline.yaml`. Las decisiones están en `DECISIONES.md`.
+
+## Ingesta, validación y capas as-of
+
+```
+data/bronze/<fuente>/fecha=<D>/rev=<N>.parquet      # ingesta: lo recibido, tal cual
+data/silver/<fuente>/fecha=<D>/rev=<N>.parquet      # validación: revisiones válidas
+data/cuarentena/<fuente>/fecha=<D>/rev=<N>.parquet  # revisiones rechazadas (+ _motivos)
+```
+
+Un día del flujo (ese día llega a la bandeja lo que toca, se ingesta y se valida):
+
+```bash
+export PYTHONPATH=src
+python -m laboratorio.inbox    --hasta         2017-07-01
+python -m laboratorio.ingest   --fecha-proceso 2017-07-01
+python -m laboratorio.validate --fecha-proceso 2017-07-01
+```
+
+- El primer día (`2017-06-30`, la fecha de corte) se hace la carga histórica.
+- Todo es idempotente: repetir un día no cambia nada.
+- Cada archivo se escribe con reemplazo atómico.
+- Para leer lo que se sabía un día X: `laboratorio.capas.leer_asof("data/silver", "ventas", asof=X)`.
+
+Para que el as-of sea fiel, la ingesta debe correr **día por día** con la bandeja de ese mismo día simulado: si recibe la bandeja completa, no tiene forma de saber cuándo llegó cada archivo.

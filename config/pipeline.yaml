@@ -10,6 +10,10 @@ datos:
     - holidays_events.csv
     - oil.csv
     - transactions.csv
+  # Tablas de referencia: entran completas en la carga inicial.
+  referencias:
+    - stores.csv
+    - holidays_events.csv
 
 rutas:
   modelos: models/
@@ -40,3 +44,28 @@ bandeja:
     fraccion_fechas: 0.15      # fechas de cada fuente que reciben un _rev2
     fraccion_filas: 0.05       # filas con valor erróneo en la versión original
     retraso_extra_dias: 3      # el _rev2 llega estos días después del original
+
+capas:
+  bronze: data/bronze           # ingesta: lo recibido, tal cual, con todas sus revisiones
+  silver: data/silver           # validación: solo las revisiones que pasan las reglas
+  cuarentena: data/cuarentena   # revisiones rechazadas, con sus motivos
+
+validacion:
+  ventas:
+    columnas: [id, date, store_nbr, family, sales, onpromotion]
+    claves: [date, store_nbr, family]
+    no_nulos: [id, date, store_nbr, family, sales, onpromotion]
+    no_negativos: [sales, onpromotion]
+    validar_tiendas: true
+  transacciones:
+    columnas: [date, store_nbr, transactions]
+    claves: [date, store_nbr]
+    no_nulos: [date, store_nbr, transactions]
+    no_negativos: [transactions]
+    validar_tiendas: true
+  petroleo:
+    columnas: [date, dcoilwtico]
+    claves: [date]
+    no_nulos: [date]              # dcoilwtico puede venir vacío
+    no_negativos: [dcoilwtico]
+    validar_tiendas: false
