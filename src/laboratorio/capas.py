@@ -5,18 +5,18 @@ Estructura de una capa:
     <capa>/<fuente>/fecha=<AAAA-MM-DD>/rev=<N>.parquet
 
 Cada archivo es una revisión completa de esa fecha, tal cual llegó (mismo
-esquema), más las columnas de control:
+esquema), y **cada fila** lleva las columnas de control:
 
-- `_revision`: 1 = original, 2 = `_rev2`, ...
-- `_fecha_ingesta`: día de proceso en que el sistema conoció esa revisión.
-- `_origen`: archivo de procedencia.
+- `revision`: 1 = original, 2 = `_rev2`, ...
+- `available_at`: momento (día de proceso) en que el sistema conoció esa revisión.
+- `origen`: archivo de procedencia.
 
 Cada escritura reemplaza el archivo de forma atómica (temporal en la misma
 carpeta + `os.replace`): un lector ve la versión anterior completa o la nueva
 completa, nunca una a medias.
 
-`leer_asof(..., asof=X)` devuelve, por fecha, la última revisión conocida el
-día X: lo que el sistema sabía ese día, sin información futura.
+`load_as_of(source, cutoff)` devuelve, por fecha, la última revisión con
+`available_at <= cutoff`: lo que el sistema sabía ese día, sin información futura.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from pathlib import Path
 
 import pandas as pd
 
-COLUMNAS_CONTROL = ["_revision", "_fecha_ingesta", "_origen"]
+COLUMNAS_CONTROL = ["revision", "available_at", "origen"]
 _PATRON_FECHA = re.compile(r"^fecha=(\d{4}-\d{2}-\d{2})$")
 _PATRON_REV = re.compile(r"^rev=(\d+)\.parquet$")
 
@@ -91,20 +91,61 @@ def escribir_json(datos: dict, ruta: Path) -> None:
     _reemplazo_atomico(ruta, lambda tmp: Path(tmp).write_text(json.dumps(datos, indent=2), encoding="utf-8"))
 
 
+class FugaDeInformacion(RuntimeError):
+    """Una lectura as-of devolvió datos posteriores al corte."""
+
+
+def _como_timestamp(cutoff: date | str) -> pd.Timestamp:
+    return pd.Timestamp(cutoff).normalize()
+
+
 def leer_asof(
-    dir_capa: Path, fuente: str, asof: date, desde: date | None = None, hasta: date | None = None
+    dir_capa: Path, fuente: str, asof: date | str, desde: date | None = None, hasta: date | None = None
 ) -> pd.DataFrame:
-    """Por fecha, la última revisión conocida el día `asof` (principio as-of)."""
-    limite = asof.isoformat()
+    """Por fecha, la última revisión con `available_at <= asof` (principio as-of)."""
+    corte = _como_timestamp(asof)
     partes = []
     for fecha, particion in listar_particiones(dir_capa, fuente).items():
-        if fecha > asof or (desde and fecha < desde) or (hasta and fecha > hasta):
+        if fecha > corte.date() or (desde and fecha < desde) or (hasta and fecha > hasta):
             continue
         for ruta in reversed(listar_revisiones(particion).values()):
             df = pd.read_parquet(ruta)
-            if not df.empty and (df["_fecha_ingesta"] <= limite).all():
+            if not df.empty and (df["available_at"] <= corte).all():
                 partes.append(df)
                 break
     if not partes:
         return pd.DataFrame()
-    return pd.concat(partes, ignore_index=True)
+    df = pd.concat(partes, ignore_index=True)
+    verificar_sin_futuro(df, corte)
+    return df
+
+
+def verificar_sin_futuro(df: pd.DataFrame, cutoff: date | str) -> None:
+    """Falla si alguna fila tiene fecha o `available_at` posterior al corte."""
+    if df.empty:
+        return
+    corte = _como_timestamp(cutoff)
+    futuras = (pd.to_datetime(df["date"]) > corte) | (df["available_at"] > corte)
+    if futuras.any():
+        raise FugaDeInformacion(f"{int(futuras.sum())} filas posteriores al corte {corte.date()}")
+
+
+def load_as_of(
+    source: str,
+    cutoff: date | str,
+    capa: str = "silver",
+    desde: date | None = None,
+    hasta: date | None = None,
+    dir_capa: Path | None = None,
+) -> pd.DataFrame:
+    """Datos de `source` tal como se conocían al cierre del día `cutoff`.
+
+    Por fecha devuelve la última revisión con `available_at <= cutoff`, y nunca
+    filas con `date` o `available_at` posteriores al corte. La capa se toma de
+    `config/pipeline.yaml` (`capas.<capa>`) salvo que se pase `dir_capa`.
+    """
+    if dir_capa is None:
+        from laboratorio.config import RAIZ, cargar_config
+
+        dir_capa = RAIZ / cargar_config()["capas"][capa]
+    return leer_asof(dir_capa, source, cutoff, desde=desde, hasta=hasta)

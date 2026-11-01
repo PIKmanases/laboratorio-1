@@ -87,6 +87,13 @@ python -m laboratorio.validate --fecha-proceso 2017-07-01
 - El primer día (`2017-06-30`, la fecha de corte) se hace la carga histórica.
 - Todo es idempotente: repetir un día no cambia nada.
 - Cada archivo se escribe con reemplazo atómico.
-- Para leer lo que se sabía un día X: `laboratorio.capas.leer_asof("data/silver", "ventas", asof=X)`.
+- Cada fila lleva `revision`, `available_at` (el día en que el sistema la conoció) y `origen`.
+- Silver solo recibe revisiones que pasan los esquemas de pandera definidos en `config/pipeline.yaml` (tipos, rangos, nulos, duplicados y fechas esperadas). Los motivos de cada rechazo quedan en `cuarentena/.../rev=N.motivos.json`.
+- Para leer lo que se sabía al cierre del día X:
+
+  ```python
+  from laboratorio.capas import load_as_of
+  ventas = load_as_of("ventas", "2017-07-20")  # nunca devuelve date ni available_at > corte
+  ```
 
 Para que el as-of sea fiel, la ingesta debe correr **día por día** con la bandeja de ese mismo día simulado: si recibe la bandeja completa, no tiene forma de saber cuándo llegó cada archivo.

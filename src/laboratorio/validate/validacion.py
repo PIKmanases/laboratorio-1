@@ -1,12 +1,21 @@
-"""Validación idempotente de bronze a silver.
+"""Validación idempotente de bronze a silver con esquemas de pandera.
 
-Cada revisión de bronze se valida una sola vez:
-- si pasa, se copia a **silver** (`silver/<fuente>/fecha=<D>/rev=<N>.parquet`);
-- si no, va a **cuarentena** con la columna `_motivos`.
+Para cada revisión de bronze se arma un esquema (`esquema()`) a partir de
+`config/pipeline.yaml` y de la fecha de la partición, y se valida:
 
-Cada escritura es atómica. Solo se procesan revisiones con
-`_fecha_ingesta <= fecha_proceso` (as-of), y las columnas de control de bronze
-se conservan, así que `leer_asof` funciona igual sobre silver.
+- **esquema:** columnas exactas (sin extra ni faltantes) y tipos (se convierten si es posible);
+- **rangos:** mínimo y máximo por columna, y nulos solo donde se permiten;
+- **duplicados:** claves únicas;
+- **fechas esperadas:** `date` igual a la fecha de la partición y nunca posterior a
+  `available_at`;
+- **referencias:** tiendas conocidas (`stores.csv`);
+- **control:** `revision` (>= 1) y `available_at` en cada fila.
+
+Los motivos de rechazo quedan en la columna `_motivos` y en `rev=N.motivos.json`.
+
+Si pasa, la revisión (con los tipos ya convertidos) se escribe en **silver**; si no,
+va a **cuarentena**. Cada revisión se procesa una sola vez,
+cada escritura es atómica y solo se procesa lo conocido hasta `fecha_proceso` (as-of).
 """
 
 from __future__ import annotations
@@ -16,9 +25,11 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
+import pandera.pandas as pa
+from pandera.errors import SchemaError, SchemaErrors
 
 from laboratorio.capas import (
-    COLUMNAS_CONTROL,
+    escribir_json,
     escribir_parquet,
     listar_particiones,
     listar_revisiones,
@@ -30,12 +41,31 @@ from laboratorio.ingest.ingesta import DIR_REFERENCIA
 
 
 @dataclass(frozen=True)
+class Columna:
+    tipo: str
+    nulos: bool = False
+    min: float | None = None
+    max: float | None = None
+
+
+@dataclass(frozen=True)
 class Reglas:
-    columnas: list[str]
+    columnas: dict[str, Columna]
     claves: list[str]
-    no_nulos: list[str]
-    no_negativos: list[str]
     validar_tiendas: bool
+
+    @classmethod
+    def desde_dict(cls, d: dict) -> Reglas:
+        return cls(
+            columnas={n: Columna(**c) for n, c in d["columnas"].items()},
+            claves=list(d["claves"]),
+            validar_tiendas=bool(d["validar_tiendas"]),
+        )
+
+
+def ruta_motivos(ruta_cuarentena: Path) -> Path:
+    """`rev=N.parquet` -> `rev=N.motivos.json`."""
+    return Path(ruta_cuarentena).with_suffix(".motivos.json")
 
 
 @dataclass
@@ -44,34 +74,82 @@ class Resumen:
     rechazadas: dict[str, int] = field(default_factory=dict)
 
 
-def validar_revision(df: pd.DataFrame, fecha: date, reglas: Reglas, tiendas: set[int]) -> list[str]:
-    """Motivos de rechazo de una revisión (lista vacía = válida)."""
-    if df.empty:
-        return ["sin filas"]
-    faltan = [c for c in reglas.columnas if c not in df.columns]
-    sobran = [c for c in df.columns if c not in reglas.columnas]
-    if faltan or sobran:
-        return [m for m in (faltan and f"columnas faltantes {faltan}", sobran and f"columnas sobrantes {sobran}") if m]
+def esquema(reglas: Reglas, fecha: date, tiendas: set[int]) -> pa.DataFrameSchema:
+    """Esquema pandera de una revisión de la partición `fecha`."""
+    columnas = {}
+    for nombre, c in reglas.columnas.items():
+        checks = []
+        if c.min is not None:
+            checks.append(pa.Check.ge(c.min, error=f"menor que {c.min}"))
+        if c.max is not None:
+            checks.append(pa.Check.le(c.max, error=f"mayor que {c.max}"))
+        if nombre == "date":
+            checks.append(pa.Check.eq(fecha.isoformat(), error=f"fecha distinta a la esperada {fecha}"))
+        if nombre == "store_nbr" and reglas.validar_tiendas:
+            checks.append(pa.Check.isin(sorted(tiendas), error="tienda desconocida"))
+        columnas[nombre] = pa.Column(c.tipo, checks=checks, nullable=c.nulos, coerce=True)
 
+    columnas["revision"] = pa.Column("int64", pa.Check.ge(1, error="revisión inválida"))
+    columnas["available_at"] = pa.Column("datetime64[ns]", coerce=True)
+    columnas["origen"] = pa.Column("str")
+    return pa.DataFrameSchema(
+        columnas,
+        strict=True,
+        unique=reglas.claves,
+        report_duplicates="all",
+        checks=[
+            pa.Check(lambda df: len(df) > 0, error="sin filas"),
+            pa.Check(
+                lambda df: pd.to_datetime(df["date"], errors="coerce") <= df["available_at"],
+                error="date posterior a available_at",
+            ),
+            pa.Check(lambda df: df["revision"].nunique() <= 1, error="más de una revisión en el archivo"),
+        ],
+    )
+
+
+_NOMBRES = {
+    "multiple_fields_uniqueness": "claves duplicadas",
+    "column_in_dataframe": "columna faltante",
+    "column_in_schema": "columna no esperada",
+    "not_nullable": "nulos no permitidos",
+}
+
+
+def _nombre_check(check: str) -> str:
+    if check.startswith(("coerce_dtype", "dtype")):
+        return f"tipo inválido, se esperaba {check.split('(', 1)[1].rstrip(')')}"
+    return _NOMBRES.get(check, check)
+
+
+def _motivos(err: SchemaErrors | SchemaError) -> list[str]:
+    """Resume los casos fallidos de pandera: un motivo por regla, en español."""
+    casos = err.failure_cases.assign(regla=lambda d: d["check"].astype(str).map(_nombre_check))
     motivos = []
-    otras_fechas = sorted(set(df["date"].astype(str)) - {fecha.isoformat()})
-    if otras_fechas:
-        motivos.append(f"fechas distintas a la partición: {otras_fechas[:3]}")
-    for c in reglas.no_nulos:
-        if (n := int(df[c].isna().sum())) > 0:
-            motivos.append(f"{n} nulos en {c}")
-    for c in reglas.no_negativos:
-        if not pd.api.types.is_numeric_dtype(df[c]):
-            motivos.append(f"{c} no es numérica")
-        elif (n := int((df[c] < 0).sum())) > 0:
-            motivos.append(f"{n} negativos en {c}")
-    if (n := int(df.duplicated(reglas.claves).sum())) > 0:
-        motivos.append(f"{n} claves duplicadas {reglas.claves}")
-    if reglas.validar_tiendas:
-        desconocidas = sorted(set(df["store_nbr"].dropna()) - tiendas)
-        if desconocidas:
-            motivos.append(f"tiendas desconocidas: {desconocidas[:5]}")
+    for regla, grupo in casos.groupby("regla", sort=False):
+        columnas = sorted(set(grupo["column"].dropna().astype(str)))
+        ejemplos = [str(x) for x in grupo["failure_case"].dropna().unique()[:3] if str(x)]
+        detalle = f" ({grupo['index'].nunique()} filas)" if grupo["index"].notna().any() else ""
+        if regla in ("columna faltante", "columna no esperada"):
+            motivos.append(f"{regla}: {', '.join(ejemplos)}")
+        elif len(columnas) == 1:
+            ej = f"; p. ej. {', '.join(ejemplos)}" if ejemplos else ""
+            motivos.append(f"{columnas[0]}: {regla}{detalle[:-1]}{ej})" if detalle else f"{columnas[0]}: {regla}")
+        elif regla == "claves duplicadas":
+            motivos.append(f"{regla} {columnas}{detalle}")
+        else:
+            motivos.append(f"{regla}{detalle}")
     return motivos
+
+
+def validar_revision(
+    df: pd.DataFrame, fecha: date, reglas: Reglas, tiendas: set[int]
+) -> tuple[pd.DataFrame | None, list[str]]:
+    """Valida una revisión. Devuelve (datos con tipos convertidos, []) o (None, motivos)."""
+    try:
+        return esquema(reglas, fecha, tiendas).validate(df, lazy=True), []
+    except (SchemaErrors, SchemaError) as err:
+        return None, _motivos(err)
 
 
 def validar(
@@ -83,7 +161,7 @@ def validar(
 ) -> Resumen:
     """Corrida diaria de validación para el día `fecha_proceso`."""
     tiendas = set(pd.read_parquet(Path(dir_bronze) / DIR_REFERENCIA / "stores.parquet")["store_nbr"])
-    limite = fecha_proceso.isoformat()
+    limite = pd.Timestamp(fecha_proceso)
     resumen = Resumen()
     for fuente, r in reglas.items():
         for fecha, particion in listar_particiones(dir_bronze, fuente).items():
@@ -94,15 +172,17 @@ def validar(
                 if rev in procesadas:
                     continue
                 df = pd.read_parquet(ruta)
-                if not df.empty and (df["_fecha_ingesta"] > limite).any():
+                if not df.empty and (df["available_at"] > limite).any():
                     continue  # todavía no se conocía el día fecha_proceso
-                datos = df.drop(columns=[c for c in COLUMNAS_CONTROL if c in df.columns])
-                motivos = validar_revision(datos, fecha, r, tiendas)
+                validado, motivos = validar_revision(df, fecha, r, tiendas)
                 if motivos:
-                    escribir_parquet(df.assign(_motivos="; ".join(motivos)), ruta_revision(dir_cuarentena, fuente, fecha, rev))
+                    destino = ruta_revision(dir_cuarentena, fuente, fecha, rev)
+                    # Motivos también en JSON: una revisión vacía no tiene filas donde guardarlos.
+                    escribir_json({"fecha_proceso": fecha_proceso.isoformat(), "motivos": motivos}, ruta_motivos(destino))
+                    escribir_parquet(df.assign(_motivos="; ".join(motivos)), destino)
                     resumen.rechazadas[fuente] = resumen.rechazadas.get(fuente, 0) + 1
                 else:
-                    escribir_parquet(df, ruta_revision(dir_silver, fuente, fecha, rev))
+                    escribir_parquet(validado, ruta_revision(dir_silver, fuente, fecha, rev))
                     resumen.validas[fuente] = resumen.validas.get(fuente, 0) + 1
     return resumen
 
@@ -114,5 +194,5 @@ def desde_config(cfg: dict, raiz: Path) -> dict:
         "dir_bronze": raiz / c["bronze"],
         "dir_silver": raiz / c["silver"],
         "dir_cuarentena": raiz / c["cuarentena"],
-        "reglas": {n: Reglas(**r) for n, r in cfg["validacion"].items()},
+        "reglas": {n: Reglas.desde_dict(r) for n, r in cfg["validacion"].items()},
     }

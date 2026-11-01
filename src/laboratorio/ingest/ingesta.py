@@ -1,13 +1,14 @@
 """Ingesta idempotente a la capa bronze.
 
 - **Carga histórica:** los datos del zip con fecha <= fecha de corte entran como
-  revisión 1, con `_fecha_ingesta = fecha_corte`.
+  revisión 1, con `available_at = fecha_corte`.
 - **Bandeja:** cada archivo `<fuente>_<fecha>[_revN].csv` entra tal cual a
   `bronze/<fuente>/fecha=<fecha>/rev=<N>.parquet` con
-  `_fecha_ingesta = fecha_proceso` (el día en que se conoció).
+  `available_at = fecha_proceso` (el día en que se conoció). Cada fila
+  lleva su `revision` y su `available_at`.
 
 Idempotencia: una revisión que ya está en bronze no se vuelve a escribir
-(conserva su `_fecha_ingesta` original); cada escritura es atómica. La bandeja
+(conserva su `available_at` original); cada escritura es atómica. La bandeja
 solo se lee.
 """
 
@@ -44,7 +45,9 @@ class Resumen:
 def _escribir_revision(
     dir_bronze: Path, fuente: str, fecha: date, rev: int, df: pd.DataFrame, origen: str, fecha_ingesta: date
 ) -> None:
-    df = df.reset_index(drop=True).assign(_revision=rev, _fecha_ingesta=fecha_ingesta.isoformat(), _origen=origen)
+    df = df.reset_index(drop=True).assign(
+        revision=rev, available_at=pd.Timestamp(fecha_ingesta), origen=origen
+    )
     escribir_parquet(df, ruta_revision(dir_bronze, fuente, fecha, rev))
 
 

@@ -51,21 +51,29 @@ capas:
   cuarentena: data/cuarentena   # revisiones rechazadas, con sus motivos
 
 validacion:
+  # Esquema por fuente (validado con pandera). Por columna: tipo, nulos permitidos y rango.
+  # Además se valida: sin columnas extra, claves únicas, date == fecha de la partición,
+  # date <= available_at, tiendas conocidas y revision/available_at en cada fila.
   ventas:
-    columnas: [id, date, store_nbr, family, sales, onpromotion]
     claves: [date, store_nbr, family]
-    no_nulos: [id, date, store_nbr, family, sales, onpromotion]
-    no_negativos: [sales, onpromotion]
     validar_tiendas: true
+    columnas:
+      id:          {tipo: int64, min: 0}
+      date:        {tipo: str}
+      store_nbr:   {tipo: int64, min: 1}
+      family:      {tipo: str}
+      sales:       {tipo: float64, min: 0}
+      onpromotion: {tipo: int64, min: 0}
   transacciones:
-    columnas: [date, store_nbr, transactions]
     claves: [date, store_nbr]
-    no_nulos: [date, store_nbr, transactions]
-    no_negativos: [transactions]
     validar_tiendas: true
+    columnas:
+      date:         {tipo: str}
+      store_nbr:    {tipo: int64, min: 1}
+      transactions: {tipo: int64, min: 0}
   petroleo:
-    columnas: [date, dcoilwtico]
     claves: [date]
-    no_nulos: [date]              # dcoilwtico puede venir vacío
-    no_negativos: [dcoilwtico]
     validar_tiendas: false
+    columnas:
+      date:       {tipo: str}
+      dcoilwtico: {tipo: float64, nulos: true, min: 0, max: 200}   # puede venir vacío
