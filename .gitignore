@@ -10,9 +10,24 @@ venv/
 # Jupyter
 .ipynb_checkpoints/
 
-# Datos y modelos (versionar con herramientas dedicadas)
-/data/
-/models/
+# Datos, modelos y pronósticos: los versiona DVC, nunca Git.
+# Se ignora el contenido pero se conservan las carpetas (.gitkeep)
+# y los punteros de DVC (*.dvc, .gitignore) para que se puedan commitear.
+/data/**
+/models/**
+/forecasts/**
+!/data/**/
+!/models/**/
+!/forecasts/**/
+!/data/**/.gitkeep
+!/models/**/.gitkeep
+!/forecasts/**/.gitkeep
+!/data/**/*.dvc
+!/models/**/*.dvc
+!/forecasts/**/*.dvc
+!/data/**/.gitignore
+!/models/**/.gitignore
+!/forecasts/**/.gitignore
 *.pkl
 *.joblib
 

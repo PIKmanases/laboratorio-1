@@ -1,0 +1,5 @@
+outs:
+- md5: b5cf65e315d307df77469d5e1580f5db
+  size: 22416355
+  hash: md5
+  path: store-sales-time-series-forecasting.zip

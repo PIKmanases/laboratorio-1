@@ -1,1 +1,16 @@
 # Parámetros del pipeline (versionado)
+
+datos:
+  # Zip descargado de Kaggle, tal cual. El flujo lo lee directamente (sin comandos de DVC).
+  zip_kaggle: data/raw/kaggle/store-sales-time-series-forecasting.zip
+  # Archivos que deben venir dentro del zip.
+  archivos:
+    - train.csv
+    - stores.csv
+    - holidays_events.csv
+    - oil.csv
+    - transactions.csv
+
+rutas:
+  modelos: models/
+  pronosticos: forecasts/

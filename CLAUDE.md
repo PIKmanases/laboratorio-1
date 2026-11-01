@@ -8,6 +8,8 @@
 
 ## Datos
 - **Nada de datos en Git.** Datos y modelos se versionan con DVC (`dvc.yaml`); en Git solo van los archivos `.dvc` y `dvc.lock`.
+- El remoto de DVC es local (solo esta máquina, en `.dvc/config.local`); el dato crudo se reproduce descargándolo de Kaggle.
+- **El CI nunca usa `dvc pull`.** Las pruebas usan datos pequeños de ejemplo en `tests/data/` (única excepción a la regla anterior).
 
 ## Flujo de trabajo
 - **PRs obligatorios.** Nunca hacer commit ni push directo a `main`; todo cambio entra por una rama y un Pull Request.
