@@ -12,11 +12,49 @@ stages:
       hash: md5
       md5: b5cf65e315d307df77469d5e1580f5db
       size: 22416355
-    - path: src/laboratorio
+    - path: src/laboratorio/capas.py
       hash: md5
-      md5: 2d2db4fc8cf202c27a77ec43ee72d6ca.dir
-      size: 82102
-      nfiles: 30
+      md5: 35b46a161fd08c52ef6cdc1aa02bc1d3
+      size: 8714
+    - path: src/laboratorio/config.py
+      hash: md5
+      md5: 82906cb7e8b25a9e404386cd7e9e2225
+      size: 283
+    - path: src/laboratorio/features
+      hash: md5
+      md5: e8c74a620e63710a69cf3884aa3914dc.dir
+      size: 7229
+      nfiles: 3
+    - path: src/laboratorio/forecast
+      hash: md5
+      md5: c29c548f59ab18c6cfa2177eeb043bf8.dir
+      size: 26399
+      nfiles: 7
+    - path: src/laboratorio/inbox
+      hash: md5
+      md5: 3afa282fd094e80996e4f90410752d16.dir
+      size: 7142
+      nfiles: 3
+    - path: src/laboratorio/ingest
+      hash: md5
+      md5: 7ef4ed737bbd5ed28bf6ec1c03249e78.dir
+      size: 7043
+      nfiles: 4
+    - path: src/laboratorio/monitoring
+      hash: md5
+      md5: a27d0f84c92eaee1a62c3ba799105e7e.dir
+      size: 2928
+      nfiles: 2
+    - path: src/laboratorio/orders
+      hash: md5
+      md5: 827ae7528a77227ab42ca05b0f6138df.dir
+      size: 2264
+      nfiles: 2
+    - path: src/laboratorio/validate
+      hash: md5
+      md5: 1453ba0aa6919f811416ed640b8f0ffe.dir
+      size: 8702
+      nfiles: 3
     params:
       config/pipeline.yaml:
         features:
@@ -51,10 +89,8 @@ stages:
             cobertura_intervalo:
             - 0.7
             - 0.9
-        pronostico:
-          modelo: media_dia_semana
-          horizonte_dias: 7
-          anticipacion_dias: 1
+        pronostico.anticipacion_dias: 1
+        pronostico.horizonte_dias: 7
     outs:
     - path: models/campeon
       hash: md5

@@ -24,6 +24,8 @@ x-airflow-comun: &airflow-comun
     AIRFLOW__DAG_PROCESSOR__REFRESH_INTERVAL: "30"
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
     PYTHONPATH: /opt/proyecto/src
+    # El contenedor no tiene .git: el manifiesto toma el SHA de aquí (export LABORATORIO_GIT_SHA=$(git rev-parse HEAD)).
+    LABORATORIO_GIT_SHA: ${LABORATORIO_GIT_SHA:-}
   volumes:
     - ./dags:/opt/airflow/dags:ro
     - ./src:/opt/proyecto/src:ro
@@ -31,6 +33,7 @@ x-airflow-comun: &airflow-comun
     - ./data:/opt/proyecto/data
     - ./forecasts:/opt/proyecto/forecasts
     - ./models:/opt/proyecto/models
+    - ./dvc.lock:/opt/proyecto/dvc.lock:ro
     - airflow-logs:/opt/airflow/logs
   depends_on: &airflow-depende
     postgres:

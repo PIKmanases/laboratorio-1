@@ -88,9 +88,12 @@ features:
   historia_cortes_dias: 364   # cortes pasados que se preparan en la primera corrida (para entrenar)
 
 pronostico:
-  modelo: media_dia_semana    # línea base; se reemplaza en la fase de modelado
+  modelo: lightgbm_cuantiles  # campeón en models/campeon (versionado con DVC); línea base: media_dia_semana
   horizonte_dias: 7           # días que cubre cada pronóstico/pedido
   anticipacion_dias: 1        # el pedido del día X cubre de X+1 a X+horizonte
+
+pedido:
+  costos: costs.yaml          # archivo de config/ con los costos unitarios; cambiarlos cambia el pedido
 
 seguimiento:
   umbral_wape: 0.35           # alerta si el WAPE total de un pronóstico lo supera

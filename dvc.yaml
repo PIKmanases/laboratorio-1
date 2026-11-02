@@ -4,12 +4,23 @@ stages:
     cmd: PYTHONPATH=src python -m laboratorio.forecast.entrenamiento --preparar-capas
     deps:
       - data/raw/kaggle/store-sales-time-series-forecasting.zip
-      - src/laboratorio
+      # Solo el código que influye en el modelo: publicar un pronóstico (tareas, publicacion,
+      # orquestacion) no debe reentrenar.
+      - src/laboratorio/capas.py
+      - src/laboratorio/config.py
+      - src/laboratorio/features
+      - src/laboratorio/forecast
+      - src/laboratorio/ingest
+      - src/laboratorio/inbox
+      - src/laboratorio/monitoring
+      - src/laboratorio/orders
+      - src/laboratorio/validate
       - config/costs.yaml
     params:
       - config/pipeline.yaml:
           - features
-          - pronostico
+          - pronostico.horizonte_dias
+          - pronostico.anticipacion_dias
           - modelado
     outs:
       # persist: el campeón anterior se conserva entre corridas porque la regla de
