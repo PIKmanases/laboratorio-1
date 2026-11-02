@@ -1,4 +1,4 @@
-"""Semanal: pronóstico del horizonte y pedido (espera los features del día)."""
+"""Semanal: pronóstico del horizonte, pedido y manifiesto de trazabilidad (espera los features del día)."""
 
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.providers.standard.sensors.external_task import ExternalTaskSensor
@@ -19,4 +19,6 @@ with DAG(dag_id="pronostico_pedido", doc_md=__doc__, **parametros_dag("pronostic
     pronosticar = PythonOperator(task_id="pronosticar", python_callable=tareas.pronosticar, op_kwargs=FECHA)
     pedir = PythonOperator(task_id="generar_pedido", python_callable=tareas.generar_pedido, op_kwargs=FECHA)
 
-    esperar >> pronosticar >> pedir
+    publicar = PythonOperator(task_id="publicar", python_callable=tareas.publicar, op_kwargs=FECHA)
+
+    esperar >> pronosticar >> pedir >> publicar

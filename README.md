@@ -110,3 +110,19 @@ dvc push             # respaldar el modelo en el remoto local
 (idempotente), hace el backtest temporal de la línea base y de LightGBM por cuantiles, decide con
 `forecast/reemplazo.py` y guarda el campeón en `models/campeon/` (`metricas.json` explica la decisión).
 Para pronosticar con él, `pronostico.modelo: lightgbm_cuantiles` en `config/pipeline.yaml`.
+
+## Publicación y trazabilidad
+
+Cada pronóstico semanal lleva un manifiesto (`forecasts/pronosticos/fecha=<D>/rev=<N>.manifiesto.json`) con el SHA de Git, el hash
+del dato crudo (DVC), la versión del modelo, la fecha de corte y el hash de la configuración. Para comprobar que se puede
+regenerar idéntico:
+
+```bash
+PYTHONPATH=src python -m laboratorio.publicacion.reproducir 2017-08-14
+```
+
+Hace `git worktree` + `dvc checkout` de esa versión, regenera el pronóstico desde cero y compara los manifiestos
+(requiere que el pronóstico se haya generado con el árbol limpio). El pedido sale de `config/costs.yaml` (o del archivo
+de `pedido.costos`): cambiar los costos cambia el pedido sin tocar código. En Docker exporta
+`LABORATORIO_GIT_SHA=$(git rev-parse HEAD)` antes de `docker compose up`.
+

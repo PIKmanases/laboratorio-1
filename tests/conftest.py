@@ -98,6 +98,7 @@ def crear_cfg_prueba(directorio: Path, zip_ejemplo: Path) -> dict:
     cfg["bandeja"].update(dir=str(directorio / "inbox"), fecha_corte=CORTE.isoformat(), fecha_fin=FIN.isoformat())
     cfg["bandeja"]["revisiones"]["fraccion_fechas"] = 1.0  # todas las fechas reciben _rev2
     cfg["capas"] = {nombre: str(directorio / nombre) for nombre in cfg["capas"]}
+    cfg["pronostico"]["modelo"] = "media_dia_semana"  # las pruebas no usan models/campeon (no está en Git)
     cfg["features"]["historia_cortes_dias"] = 3
     cfg["orquestacion"]["inicio"] = CORTE.isoformat()
     return cfg

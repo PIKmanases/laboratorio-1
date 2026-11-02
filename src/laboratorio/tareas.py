@@ -34,6 +34,7 @@ from laboratorio.inbox import simulador
 from laboratorio.ingest import ingesta
 from laboratorio.monitoring.desempeno import evaluar
 from laboratorio.orders.pedido import calcular_pedido
+from laboratorio.publicacion import manifiesto
 from laboratorio.validate import validacion
 
 log = logging.getLogger(__name__)
@@ -96,12 +97,15 @@ def _preparar_corte(cfg: dict, corte: date) -> int | None:
     return escribir_derivado(_capa(cfg, "features"), "predictores", corte, df, insumos, available_at=corte)
 
 
-def preparar_features(fecha: str | date, cfg: dict | None = None) -> dict:
-    """Predictores as-of del corte `fecha` y, si faltan, de los cortes históricos para entrenar."""
+def preparar_features(fecha: str | date, cfg: dict | None = None, historia: bool = True) -> dict:
+    """Predictores as-of del corte `fecha` y, si faltan, de los cortes históricos para entrenar.
+
+    Con `historia=False` solo se prepara el corte del día (lo que necesita un pronóstico).
+    """
     cfg, dia = _cfg(cfg), _fecha(fecha)
     existentes = listar_particiones(_capa(cfg, "features"), "predictores")
     escritas = {}
-    for i in range(cfg["features"]["historia_cortes_dias"], -1, -1):
+    for i in range(cfg["features"]["historia_cortes_dias"] if historia else 0, -1, -1):
         corte = dia - timedelta(days=i)
         if corte != dia and corte in existentes:
             continue  # un corte pasado no cambia (as-of); solo se completa si falta
@@ -132,11 +136,33 @@ def generar_pedido(fecha: str | date, cfg: dict | None = None) -> dict:
     pred = leer_asof(_capa(cfg, "features"), "predictores", dia, desde=dia, hasta=dia)
     if pron.empty:
         raise RuntimeError(f"no hay pronóstico del corte {dia}: corre primero pronosticar")
-    costos = cargar_config("costs.yaml")
+    costos = cargar_config(cfg["pedido"]["costos"])
     df = calcular_pedido(_sin_control(pron), _sin_control(pred), costos)
     insumos = {**insumos_de(pron, "pronosticos"), **insumos_de(pred, "predictores"), "costos": costos}
     rev = escribir_derivado(_capa(cfg, "pronosticos"), "pedidos", dia, df, insumos, available_at=dia)
     return {"revision_escrita": rev, "items": len(df), "cantidad_total": round(float(df["cantidad_pedido"].sum()), 2)}
+
+
+def publicar(fecha: str | date, cfg: dict | None = None) -> dict:
+    """Manifiesto de trazabilidad del pronóstico y el pedido del corte `fecha` (ver `publicacion.manifiesto`)."""
+    cfg, dia = _cfg(cfg), _fecha(fecha)
+    pron = leer_asof(_capa(cfg, "pronosticos"), "pronosticos", dia, desde=dia, hasta=dia)
+    ped = leer_asof(_capa(cfg, "pronosticos"), "pedidos", dia, desde=dia, hasta=dia)
+    if pron.empty or ped.empty:
+        raise RuntimeError(f"no hay pronóstico y pedido del corte {dia}: corre primero pronosticar y generar_pedido")
+    ruta, escrito = manifiesto.publicar(cfg, dia, pron, ped, _capa(cfg, "pronosticos"))
+    return {"manifiesto": str(ruta.relative_to(_capa(cfg, "pronosticos"))), "escrito": escrito}
+
+
+def procesar_capas_hasta(fecha: str | date, cfg: dict | None = None) -> None:
+    """Corre día a día (idempotente) bandeja, ingesta y validación desde la fecha de corte hasta `fecha`."""
+    cfg, fin = _cfg(cfg), _fecha(fecha)
+    dia = date.fromisoformat(cfg["bandeja"]["fecha_corte"])
+    while dia <= fin:
+        recibir_bandeja(dia, cfg)
+        ingestar(dia, cfg)
+        validar(dia, cfg)
+        dia += timedelta(days=1)
 
 
 # --- Seguimiento del desempeño ----------------------------------------------------------
@@ -203,7 +229,7 @@ def seguir_desempeno(fecha: str | date, cfg: dict | None = None) -> dict:
 
 TAREAS = {
     f.__name__: f
-    for f in (recibir_bandeja, ingestar, validar, preparar_features, pronosticar, generar_pedido, seguir_desempeno)
+    for f in (recibir_bandeja, ingestar, validar, preparar_features, pronosticar, generar_pedido, publicar, seguir_desempeno)
 }
 
 
