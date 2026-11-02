@@ -34,6 +34,7 @@ from laboratorio.config import RAIZ, cargar_config
 
 ESQUEMA = 1
 ENV_SHA = "LABORATORIO_GIT_SHA"  # para contenedores sin .git
+ENV_SUCIO = "LABORATORIO_GIT_SUCIO"  # "1" si el árbol tenía cambios sin commitear, "0" si estaba limpio
 LOCK_DVC = "dvc.lock"
 
 
@@ -68,13 +69,14 @@ def hash_contenido(df: pd.DataFrame) -> str:
     return _sha256(pd.util.hash_pandas_object(datos, index=False).to_numpy().tobytes())[:16] + f":{len(datos)}x{datos.shape[1]}"
 
 
-def estado_git(raiz: Path = RAIZ) -> dict:
-    """SHA del commit y si hay cambios sin commitear (None si se tomó de la variable de entorno)."""
+def estado_git(raiz: Path = RAIZ, ignorar: tuple[str, ...] = ()) -> dict:
+    """SHA del commit y si hay cambios sin commitear, sin contar las rutas de `ignorar` (en un contenedor, de las variables de entorno; None si se desconoce)."""
     if os.environ.get(ENV_SHA):
-        return {"sha": os.environ[ENV_SHA], "sucio": None}
+        sucio = os.environ.get(ENV_SUCIO, "")
+        return {"sha": os.environ[ENV_SHA], "sucio": sucio == "1" if sucio in ("0", "1") else None}
     try:
         sha = subprocess.run(["git", "-C", str(raiz), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
-        cambios = subprocess.run(["git", "-C", str(raiz), "status", "--porcelain"], capture_output=True, text=True, check=True).stdout
+        cambios = subprocess.run(["git", "-C", str(raiz), "status", "--porcelain", "--", ".", *[f":(exclude){r}" for r in ignorar]], capture_output=True, text=True, check=True).stdout
     except (OSError, subprocess.CalledProcessError):
         return {"sha": None, "sucio": None}
     return {"sha": sha, "sucio": bool(cambios.strip())}

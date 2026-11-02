@@ -27,6 +27,7 @@ if [ ! -f .env ]; then
 fi
 
 export LABORATORIO_GIT_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
+export LABORATORIO_GIT_SUCIO="$([ -n "$(git status --porcelain 2>/dev/null)" ] && echo 1 || echo 0)"
 docker compose up -d --build
 echo
 echo "Airflow: http://localhost:8080 (sin login). El backfill ya está en marcha: ver README, sección 'Seguimiento'."

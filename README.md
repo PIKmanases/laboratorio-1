@@ -188,6 +188,7 @@ espera los features de ese día. Si lanzas a mano un DAG de más abajo antes que
 | `No runs to create for Dag ...` | Rango de fechas sin hora (ver arriba). |
 | `Another backfill is running for Dag ...` | Hay un backfill abierto. Espera a que termine o cancélalo en la UI (*Backfills*). |
 | `airflow-dag-processor` aparece *unhealthy* con carga alta | Es el chequeo, no el proceso: `docker compose ps` y los logs del dag-processor lo confirman. Se recupera solo al bajar la carga. |
+| Una corrida quedó en rojo y las siguientes se quedan en cola | Por `depends_on_past` y `max_active_runs=1`, un run fallido detiene al resto de su backfill. Cancela ese backfill y relánzalo (solo repite lo fallido): `T=$(curl -s -X POST localhost:8080/auth/token -H 'Content-Type: application/json' -d '{"username":"admin","password":"admin"}' \| python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")`, luego `curl -X PUT localhost:8080/api/v2/backfills/<id>/cancel -H "Authorization: Bearer $T"` (el `<id>` está en *Browse → Backfills*) y `docker compose run --rm -e ORQUESTAR_DAGS="<dag>" airflow-orquestador`. |
 | Una corrida queda en rojo | UI → corrida → tarea → *Log*. Se reintenta sola 1 vez; si persiste, corrige y vuelve a lanzar el backfill (solo repite lo fallido). |
 
 Detener y reiniciar:
@@ -198,6 +199,47 @@ docker compose down -v     # además borra la base de Airflow
 rm -rf data/bronze data/silver data/cuarentena data/inbox data/features data/monitoring forecasts/pronosticos forecasts/pedidos   # borra los resultados
 ./iniciar.sh               # repetirlo es seguro: lo ya procesado no se vuelve a escribir
 ```
+
+## Generar la evidencia para documentar (ejecuciones, comparación de modelos y desempeño)
+
+La interfaz de Airflow **muestra** las ejecuciones pero no las crea: los DAGs son del periodo simulado y se ejecutan con backfill (ver arriba).
+Para tener evidencia con poco tiempo basta un tramo corto: **2017-06-30 a 2017-07-11** (12 días, 2 pronósticos semanales, y el del lunes 3 queda
+con su semana completa observada, así que tiene costo y fill rate):
+
+```bash
+./iniciar.sh                      # o, sin lanzar el periodo completo, los servicios de la sección "Probar con un solo día"
+docker compose run --rm -e ORQUESTAR_INICIO=2017-06-30 -e ORQUESTAR_FIN=2017-07-11 airflow-orquestador   # solo ese tramo
+```
+
+(Si usaste `./iniciar.sh`, el periodo completo ya está en marcha: espera a que termine, o detén con `docker compose down` y arranca solo los servicios.)
+
+Cuánto tarda, medido en una laptop de 4 GB (con otras cargas en paralelo, así que es una cota alta): el **primer día es ~17 min** (carga histórica de 3 M de filas y
+un año de features); cada día siguiente tarda ~2–3 min porque el simulador relee el zip en `recibir_bandeja`. Total del tramo: unos 40–50 min. Todo lo previo al
+backfill (modelo ya entrenado con `dvc repro`) evita que el DAG semanal entrene dentro de Airflow. **No ejecutes pruebas ni otras cargas pesadas mientras corre**: con la
+máquina saturada los sensores pueden agotar el tiempo de importación (ver "Si algo no aparece o no corre").
+
+Cuando las 38 corridas estén en verde (12 + 12 + 2 + 12):
+
+```bash
+PYTHONPATH=src python -m laboratorio.publicacion.reporte        # escribe docs/evidencia/reporte.md
+```
+
+El reporte reúne, en un solo Markdown: **(1)** corridas por DAG leídas de la API de Airflow (estado, fechas lógicas, duración), **(2)** comparación de
+modelos: el backtest que decidió el reemplazo (métricas, costo por corte y condiciones de la regla) y, en vivo, el campeón contra la línea base sobre los pronósticos del
+flujo, **(3)** seguimiento del desempeño por pronóstico (WAPE, sesgo, costo, fill rate, alertas, revisiones) y por familia, y **(4)** la trazabilidad de cada pronóstico (SHA, modelo, datos, configuración).
+Si Airflow no está disponible, la sección 1 lo indica; `--airflow no` la omite y `--asof AAAA-MM-DD` fija el día del reporte. El reporte generado con el tramo anterior está en [`docs/evidencia/reporte.md`](docs/evidencia/reporte.md).
+
+Capturas de la interfaz que conviene incluir (<http://localhost:8080>):
+
+| Captura | Dónde | Qué demuestra |
+|---|---|---|
+| Lista de DAGs | *DAGs* | Los 4 DAGs activos con sus últimas corridas en verde |
+| Cuadrícula de `ingesta_validacion` | DAG → *Overview/Grid* | Una corrida por día y sus tres tareas (`recibir_bandeja` → `ingestar` → `validar`) |
+| Grafo de `seguimiento_desempeno` | DAG → *Graph* | Los dos sensores (validación del día y pronósticos previos) antes de `seguir_desempeno` |
+| Grafo de `pronostico_pedido` | DAG → *Graph* | Sensor → `pronosticar` → `generar_pedido` → `publicar` (solo corre los lunes) |
+| Backfills | *Browse → Backfills* | Un backfill por DAG para el periodo |
+| Log de `publicar` | corrida del lunes 2017-07-03 → tarea → *Log* | El manifiesto escrito (`forecasts/pronosticos/fecha=2017-07-03/rev=1.manifiesto.json`) |
+| Duración (Gantt) | corrida → *Gantt* | Dónde se va el tiempo (sensores en espera = *up_for_reschedule*) |
 
 ## Cómo está armado
 
