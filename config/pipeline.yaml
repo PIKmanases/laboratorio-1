@@ -110,3 +110,31 @@ orquestacion:
     preparacion_features:  {frecuencia: diaria, depends_on_past: false}
     pronostico_pedido:     {frecuencia: semanal, depends_on_past: true}
     seguimiento_desempeno: {frecuencia: diaria, depends_on_past: true}
+
+modelado:
+  # Modelo candidato: LightGBM por cuantiles (un modelo por cuantil, sobre log1p(ventas)).
+  # La línea base (campeón inicial) es la media del mismo día de la semana.
+  baseline: media_dia_semana
+  cuantiles: [0.1, 0.5, 0.9]  # el pronóstico es la mediana; sigma sale de (p90 - p10)
+  semanas_entrenamiento: 52   # cortes semanales (lunes) hacia atrás usados para entrenar
+  folds: 4                    # cortes de prueba: los últimos lunes con horizonte completo observado
+  dias_espera_etiquetas: 11   # purga: anticipación+horizonte (8) + llegada del _rev2 (3)
+  lightgbm:
+    n_estimators: 150
+    learning_rate: 0.1
+    num_leaves: 63
+    min_child_samples: 100
+    feature_fraction: 0.8
+    bagging_fraction: 0.7
+    bagging_freq: 1
+    max_bin: 127
+    n_jobs: 4                 # laptop: no usar todos los núcleos
+    seed: 42
+  # Regla de reemplazo del campeón (ver laboratorio.forecast.reemplazo).
+  reemplazo:
+    mejora_minima_costo: 0.02     # el costo de negocio debe bajar al menos 2 %
+    tolerancia_wape: 0.0          # el WAPE no puede ser peor que el del campeón
+    folds_ganados_minimos: 3      # gana en costo en al menos 3 de los 4 folds
+    fill_rate_minimo: 0.85        # servicio mínimo aceptable
+    sesgo_maximo: 0.10            # |sesgo| agregado <= 10 %
+    cobertura_intervalo: [0.70, 0.90]   # cobertura real de [p10, p90] (nominal 80 %)

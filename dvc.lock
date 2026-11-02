@@ -1,0 +1,63 @@
+schema: '2.0'
+stages:
+  entrenar:
+    cmd: PYTHONPATH=src python -m laboratorio.forecast.entrenamiento 
+      --preparar-capas
+    deps:
+    - path: config/costs.yaml
+      hash: md5
+      md5: 62cdf314b253c9e4774c3f64b3332468
+      size: 1085
+    - path: data/raw/kaggle/store-sales-time-series-forecasting.zip
+      hash: md5
+      md5: b5cf65e315d307df77469d5e1580f5db
+      size: 22416355
+    - path: src/laboratorio
+      hash: md5
+      md5: 2d2db4fc8cf202c27a77ec43ee72d6ca.dir
+      size: 82102
+      nfiles: 30
+    params:
+      config/pipeline.yaml:
+        features:
+          ventana_dias: 28
+          historia_cortes_dias: 364
+        modelado:
+          baseline: media_dia_semana
+          cuantiles:
+          - 0.1
+          - 0.5
+          - 0.9
+          semanas_entrenamiento: 52
+          folds: 4
+          dias_espera_etiquetas: 11
+          lightgbm:
+            n_estimators: 150
+            learning_rate: 0.1
+            num_leaves: 63
+            min_child_samples: 100
+            feature_fraction: 0.8
+            bagging_fraction: 0.7
+            bagging_freq: 1
+            max_bin: 127
+            n_jobs: 4
+            seed: 42
+          reemplazo:
+            mejora_minima_costo: 0.02
+            tolerancia_wape: 0.0
+            folds_ganados_minimos: 3
+            fill_rate_minimo: 0.85
+            sesgo_maximo: 0.1
+            cobertura_intervalo:
+            - 0.7
+            - 0.9
+        pronostico:
+          modelo: media_dia_semana
+          horizonte_dias: 7
+          anticipacion_dias: 1
+    outs:
+    - path: models/campeon
+      hash: md5
+      md5: 0efab420a1e87181e145eaa6cc077fb3.dir
+      size: 2620312
+      nfiles: 6
