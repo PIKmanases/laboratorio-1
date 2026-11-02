@@ -27,8 +27,8 @@ stages:
       nfiles: 3
     - path: src/laboratorio/forecast
       hash: md5
-      md5: c29c548f59ab18c6cfa2177eeb043bf8.dir
-      size: 26399
+      md5: 988a5822f6eaf1674ee5808561b77d87.dir
+      size: 27281
       nfiles: 7
     - path: src/laboratorio/inbox
       hash: md5
@@ -62,6 +62,7 @@ stages:
           historia_cortes_dias: 364
         modelado:
           baseline: media_dia_semana
+          fecha_entrenamiento: '2017-06-30'
           cuantiles:
           - 0.1
           - 0.5
@@ -94,6 +95,6 @@ stages:
     outs:
     - path: models/campeon
       hash: md5
-      md5: 0efab420a1e87181e145eaa6cc077fb3.dir
-      size: 2620312
+      md5: a781a08c0d538a60ef0d3b0ad7c75b97.dir
+      size: 2620744
       nfiles: 6

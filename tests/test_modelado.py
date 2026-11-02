@@ -1,5 +1,6 @@
 """Modelado: esquema temporal sin fuga, LightGBM por cuantiles, métricas y campeón guardado."""
 
+import copy
 import json
 from datetime import date, timedelta
 
@@ -39,7 +40,7 @@ def predictores_sinteticos(n_series=6, cortes=(date(2017, 1, 2),), horizonte=7, 
 
 
 def test_cortes_de_prueba_son_lunes_con_horizonte_observado():
-    ultima_venta = date.fromisoformat(CFG["bandeja"]["fecha_fin"])
+    ultima_venta = dataset.fecha_entrenamiento(CFG) - timedelta(days=CFG["bandeja"]["fuentes"]["ventas"]["retraso_dias"])
     pruebas = dataset.cortes_de_prueba(CFG)
     assert len(pruebas) == CFG["modelado"]["folds"]
     assert all(c.weekday() == CFG["orquestacion"]["dia_semana_pronostico"] for c in pruebas)
@@ -256,3 +257,52 @@ def test_config_de_modelado_coherente():
     m = CFG["modelado"]
     assert 0.5 in m["cuantiles"] and m["folds"] >= m["reemplazo"]["folds_ganados_minimos"]
     assert m["lightgbm"]["n_jobs"] <= 4  # laptop
+
+
+# --- el modelo no conoce nada posterior al inicio del flujo ------------------------------
+
+
+def test_el_modelo_se_entrena_solo_con_la_carga_historica():
+    """Todo pronóstico del flujo (desde bandeja.fecha_corte) es posterior a los datos del entrenamiento."""
+    assert dataset.fecha_entrenamiento(CFG) <= date.fromisoformat(CFG["bandeja"]["fecha_corte"])
+    assert max(dataset.todos_los_cortes(CFG)) + timedelta(days=CFG["pronostico"]["horizonte_dias"]) <= dataset.fecha_entrenamiento(CFG)
+
+
+def cfg_con_modelos(tmp_path, modelo="campeon"):
+    cfg = copy.deepcopy(CFG)
+    cfg["capas"]["modelos"] = str(tmp_path / "models")
+    cfg["pronostico"]["modelo"] = modelo
+    return cfg
+
+
+def test_modelo_vigente(tmp_path):
+    cfg = cfg_con_modelos(tmp_path)
+    with pytest.raises(FileNotFoundError, match="campeón"):
+        modelos.modelo_vigente(cfg)
+    guardar_campeon(modos := tmp_path / "models" / "campeon", evaluacion.receta_baseline(cfg), {"version": "v0"})
+    assert modelos.hay_campeon(cfg) and modelos.modelo_vigente(cfg) == "media_dia_semana"
+    guardar_campeon(modos, evaluacion.receta_lightgbm(cfg), {"version": "v1"})
+    assert modelos.modelo_vigente(cfg) == modelos.LIGHTGBM
+    assert modelos.modelo_vigente(cfg_con_modelos(tmp_path, "media_28")) == "media_28"  # nombre explícito
+
+
+def test_pronosticar_entrena_el_campeon_inicial_una_sola_vez(tmp_path, cfg_prueba, monkeypatch):
+    """Desde cero no hay intervención manual: la primera tarea de pronóstico deja listo el campeón."""
+    from laboratorio import tareas
+
+    cfg = cfg_prueba
+    cfg["pronostico"]["modelo"] = "campeon"
+    cfg["capas"]["modelos"] = str(tmp_path / "models")
+    llamadas = []
+
+    def entrenar_falso(c):
+        llamadas.append(c)
+        guardar_campeon(tmp_path / "models" / "campeon", evaluacion.receta_baseline(c), {"version": "v0"})
+
+    monkeypatch.setattr(tareas.entrenamiento, "entrenar", entrenar_falso)
+    dia = date(2017, 1, 4)
+    tareas.procesar_capas_hasta(dia, cfg)
+    tareas.preparar_features(dia, cfg, historia=False)
+    assert tareas.pronosticar(dia, cfg)["modelo"] == "media_dia_semana"  # el campeón es la línea base
+    tareas.pronosticar(dia, cfg)
+    assert len(llamadas) == 1

@@ -29,13 +29,13 @@ def cortes_semanales(hasta: date, cantidad: int, dia_semana: int) -> list[date]:
 
 
 def fecha_entrenamiento(cfg: dict) -> date:
-    """Día simulado de la corrida: el último con datos en las capas."""
-    return date.fromisoformat(cfg["orquestacion"]["fin"])
+    """Día as-of del entrenamiento (config): solo se usa lo conocido hasta ese día."""
+    return date.fromisoformat(cfg["modelado"]["fecha_entrenamiento"])
 
 
 def cortes_de_prueba(cfg: dict) -> list[date]:
     p, m, o = cfg["pronostico"], cfg["modelado"], cfg["orquestacion"]
-    ultima_venta = date.fromisoformat(cfg["bandeja"]["fecha_fin"])
+    ultima_venta = fecha_entrenamiento(cfg) - timedelta(days=cfg["bandeja"]["fuentes"]["ventas"]["retraso_dias"])
     ultimo_objetivo_a_dias = p["anticipacion_dias"] + p["horizonte_dias"] - 1
     hasta = ultima_venta - timedelta(days=ultimo_objetivo_a_dias)  # horizonte completo observado
     return cortes_semanales(hasta, m["folds"], o["dia_semana_pronostico"])
