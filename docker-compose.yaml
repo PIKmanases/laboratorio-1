@@ -34,6 +34,7 @@ x-airflow-comun: &airflow-comun
     - ./forecasts:/opt/proyecto/forecasts
     - ./models:/opt/proyecto/models
     - ./dvc.lock:/opt/proyecto/dvc.lock:ro
+    - ./docker:/opt/proyecto/docker:ro
     - airflow-logs:/opt/airflow/logs
   depends_on: &airflow-depende
     postgres:
@@ -114,6 +115,20 @@ services:
       <<: *airflow-depende
       airflow-init:
         condition: service_completed_successfully
+
+  # Un solo uso: activa los DAGs y lanza el backfill de todo el periodo (docker/orquestar.sh).
+  airflow-orquestador:
+    <<: *airflow-comun
+    command: ["bash", "/opt/proyecto/docker/orquestar.sh"]
+    restart: "no"
+    depends_on:
+      <<: *airflow-depende
+      airflow-apiserver:
+        condition: service_healthy
+      airflow-scheduler:
+        condition: service_healthy
+      airflow-dag-processor:
+        condition: service_healthy
 
 volumes:
   postgres-db:
