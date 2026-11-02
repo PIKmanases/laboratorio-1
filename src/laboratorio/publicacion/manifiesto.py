@@ -5,7 +5,7 @@ se guarda qué lo produjo, para poder regenerarlo y comprobar que sale idéntico
 
 - `git`: SHA del commit del código (y si había cambios sin commitear).
 - `datos`: hash (md5, el de DVC) del dato crudo de Kaggle.
-- `modelo`: nombre, versión, hash DVC (`dvc.lock`) y hash del contenido de `models/campeon`.
+- `modelo`: nombre, versión, datos con los que se entrenó, hash DVC (`dvc.lock`) y hash del contenido de `models/campeon`.
 - `fecha_corte`: el día as-of del pronóstico.
 - `configuracion`: hash de `config/pipeline.yaml` y del archivo de costos (YAML ya leído,
   así los comentarios y el formato no cuentan).
@@ -102,15 +102,21 @@ def datos_crudos(cfg: dict, raiz: Path = RAIZ) -> dict:
 
 
 def modelo(cfg: dict, raiz: Path = RAIZ) -> dict:
-    from laboratorio.forecast.modelos import LIGHTGBM, dir_campeon
+    from laboratorio.forecast.modelos import LIGHTGBM, dir_campeon, modelo_vigente
 
-    nombre = cfg["pronostico"]["modelo"]
+    nombre = modelo_vigente(cfg)
     if nombre != LIGHTGBM:
-        return {"nombre": nombre, "version": f"baseline:{nombre}", "md5_dvc": None, "contenido": None}
+        return {"nombre": nombre, "version": f"baseline:{nombre}", "entrenado_con_datos_hasta": None, "md5_dvc": None, "contenido": None}
     carpeta = dir_campeon(cfg)
     meta = json.loads((carpeta / "meta.json").read_text(encoding="utf-8"))
     ruta_dvc = f"{cfg['capas']['modelos']}/campeon"
-    return {"nombre": nombre, "version": meta["version"], "md5_dvc": dvc_md5(raiz, ruta_dvc), "contenido": hash_directorio(carpeta)}
+    return {
+        "nombre": nombre,
+        "version": meta["version"],
+        "entrenado_con_datos_hasta": meta.get("entrenado_con_datos_hasta"),
+        "md5_dvc": dvc_md5(raiz, ruta_dvc),
+        "contenido": hash_directorio(carpeta),
+    }
 
 
 def configuracion(cfg: dict) -> dict:

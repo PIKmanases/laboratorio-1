@@ -29,6 +29,7 @@ from laboratorio.capas import (
 )
 from laboratorio.config import RAIZ, cargar_config
 from laboratorio.features.construccion import predictores_del_corte
+from laboratorio.forecast import entrenamiento, modelos
 from laboratorio.forecast.modelos import pronosticar as aplicar_modelo
 from laboratorio.inbox import simulador
 from laboratorio.ingest import ingesta
@@ -123,7 +124,12 @@ def pronosticar(fecha: str | date, cfg: dict | None = None) -> dict:
     pred = leer_asof(_capa(cfg, "features"), "predictores", dia, desde=dia, hasta=dia)
     if pred.empty:
         raise RuntimeError(f"no hay predictores del corte {dia}: corre primero preparar_features")
-    modelo = cfg["pronostico"]["modelo"]
+    if cfg["pronostico"]["modelo"] == modelos.CAMPEON and not modelos.hay_campeon(cfg):
+        # Primera corrida desde cero: se entrena el campeón inicial con la carga histórica (as-of de
+        # `modelado.fecha_entrenamiento`, independiente del día de este pronóstico).
+        log.warning("no hay modelo campeón: se entrena el inicial (tarda unos minutos)")
+        entrenamiento.entrenar(cfg)
+    modelo = modelos.modelo_vigente(cfg)
     df = aplicar_modelo(_sin_control(pred), modelo)
     insumos = {**insumos_de(pred, "predictores"), "modelo": modelo}
     rev = escribir_derivado(_capa(cfg, "pronosticos"), "pronosticos", dia, df, insumos, available_at=dia)

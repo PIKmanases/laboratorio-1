@@ -118,6 +118,9 @@ modelado:
   # Modelo candidato: LightGBM por cuantiles (un modelo por cuantil, sobre log1p(ventas)).
   # La línea base (campeón inicial) es la media del mismo día de la semana.
   baseline: media_dia_semana
+  # Día as-of del entrenamiento: la carga histórica (== bandeja.fecha_corte). Así el modelo no conoce
+  # nada posterior al inicio del flujo y todo pronóstico del flujo es posterior al entrenamiento.
+  fecha_entrenamiento: "2017-06-30"
   cuantiles: [0.1, 0.5, 0.9]  # el pronóstico es la mediana; sigma sale de (p90 - p10)
   semanas_entrenamiento: 52   # cortes semanales (lunes) hacia atrás usados para entrenar
   folds: 4                    # cortes de prueba: los últimos lunes con horizonte completo observado

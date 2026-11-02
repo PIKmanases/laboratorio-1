@@ -1,81 +1,208 @@
 # laboratorio-1
 
-Proyecto de reproducibilidad y orquestación de un producto de Machine Learning.
-
-## Estructura de datos
+Pronóstico semanal de ventas y pedido sugerido por tienda y familia (competencia
+[Store Sales – Time Series Forecasting](https://www.kaggle.com/competitions/store-sales-time-series-forecasting) de Kaggle),
+construido como un producto de ML reproducible y orquestado con Airflow.
 
 ```
-data/raw/kaggle/   # datos crudos de Kaggle (aquí se carga el zip)
-models/            # modelos entrenados
-forecasts/         # pronósticos generados
+bandeja ──► ingesta ──► validación ──► features as-of ──► pronóstico (LightGBM por cuantiles) ──► pedido ──► manifiesto
+ (D+1..D+3)  bronze        silver          (cada corte)        (lunes, 7 días)                  (costs.yaml)   (trazabilidad)
+                 └── cuarentena                                                                       │
+                                                      seguimiento diario del desempeño ◄──────────────┘
 ```
 
-Estas carpetas las versiona **DVC** y Git las ignora: en Git solo se commitean los punteros `*.dvc`.
+Cuatro DAGs (`dags/`): `ingesta_validacion` (diario), `preparacion_features` (diario), `pronostico_pedido` (semanal, lunes) y
+`seguimiento_desempeno` (diario). Los DAGs solo orquestan; la lógica está en `src/laboratorio/`.
+Las decisiones de diseño, con alternativas y justificaciones, están en [`DECISIONES.md`](DECISIONES.md).
 
-## Carga de datos
+## Puesta en marcha desde cero
 
-1. Descarga el zip de la competencia de Kaggle y cópialo **sin descomprimir** en:
+Requisitos: Linux/macOS/WSL con **Git**, **Docker con Compose** y unos **8 GB de RAM** libres para Docker
+(Airflow + Postgres + el entrenamiento inicial del modelo; es una estimación, no se probó el stack completo y con 4 GB probablemente no alcance).
 
-   ```
-   data/raw/kaggle/store-sales-time-series-forecasting.zip
-   ```
-
-   El zip debe contener: `train.csv`, `stores.csv`, `holidays_events.csv`, `oil.csv` y `transactions.csv`.
-   Si el archivo tiene otro nombre, renómbralo o cambia `datos.zip_kaggle` en `config/pipeline.yaml`.
-
-2. Versiónalo con DVC (una sola vez, y cada vez que cambien los datos) y commitea el puntero en un PR:
-
-   ```bash
-   source .venv/bin/activate
-   dvc add data/raw/kaggle/store-sales-time-series-forecasting.zip
-   git add data/raw/kaggle/store-sales-time-series-forecasting.zip.dvc
-   ```
-
-El flujo lee los CSV directamente desde el zip (ruta en `config/pipeline.yaml`); no necesita ejecutar comandos de DVC.
-
-### Remoto de DVC
-
-El remoto es una carpeta local de esta máquina, configurada en `.dvc/config.local` (no se versiona):
+**1. Clonar**
 
 ```bash
-dvc remote add --local -d local ~/dvc-remote/laboratorio-1
-dvc push   # respaldar los datos
-dvc pull   # recuperarlos
+git clone https://github.com/PIKmanases/laboratorio-1.git
+cd laboratorio-1
 ```
 
-En otra máquina, los datos se reproducen descargando el zip de Kaggle al mismo lugar: su md5 debe coincidir con el `.dvc`.
+**2. Colocar los datos de Kaggle**
 
-## Pruebas
+Descarga el zip de la competencia (botón *Download All* en la pestaña *Data*, o `kaggle competitions download -c store-sales-time-series-forecasting`)
+y cópialo **sin descomprimir** exactamente en:
+
+```
+laboratorio-1/data/raw/kaggle/store-sales-time-series-forecasting.zip
+```
+
+Debe contener `train.csv`, `stores.csv`, `holidays_events.csv`, `oil.csv` y `transactions.csv`. Su md5 debe ser el del puntero
+`data/raw/kaggle/store-sales-time-series-forecasting.zip.dvc` (el script lo comprueba).
+
+**3. Iniciar todo**
 
 ```bash
-PYTHONPATH=src pytest
+./iniciar.sh
 ```
 
-Las pruebas y el CI usan datos pequeños de ejemplo en `tests/data/kaggle/`, nunca `dvc pull`.
+Un solo comando, sin pasos manuales. El script:
 
-## Simulador de la bandeja de entrada
+1. comprueba que el zip esté en su lugar y que coincida con el versionado en DVC;
+2. crea `.env` (con tu UID y un secreto aleatorio para Airflow) si no existe;
+3. construye la imagen y levanta Postgres y Airflow 3 (`docker compose up -d --build`);
+4. el servicio de un solo uso `airflow-orquestador` espera a que Airflow cargue los DAGs, **los activa** (nacen en pausa) y
+   **lanza el backfill** de todo el periodo (`orquestacion.inicio` a `orquestacion.fin` en `config/pipeline.yaml`: 2017-06-30 a 2017-08-21).
+
+Airflow queda en <http://localhost:8080> (sin login en local). En la primera semana de pronóstico la tarea `pronosticar`
+**entrena sola el modelo inicial** (unos minutos); no hay que correr nada antes.
+
+**4. Seguir el avance**
 
 ```bash
-PYTHONPATH=src python -m laboratorio.inbox                     # entrega todo
-PYTHONPATH=src python -m laboratorio.inbox --hasta 2017-07-10  # solo lo que llegó hasta ese día
+docker compose ps                                   # servicios; airflow-orquestador termina en "Exited (0)"
+docker compose logs airflow-orquestador             # DAGs activados y backfills creados
 ```
 
-- **Carga histórica inicial:** datos con fecha <= `2017-06-30` (`bandeja.fecha_corte`), leídos del zip.
-- **Bandeja** (`data/inbox/`): un archivo por fecha y fuente, `<fuente>/<fuente>_<fecha>.csv`. Cada fuente tiene su retraso (ventas D+1, transacciones D+2, petróleo D+3).
-- **Revisiones:** en algunas fechas el archivo original trae errores y luego llega `<fuente>_<fecha>_rev2.csv` con los valores corregidos.
-- La ingesta (`laboratorio.ingest.bandeja`) lee la bandeja usando la última revisión de cada fecha y **nunca escribe en ella**.
+En la UI, cada DAG muestra una corrida por día (por lunes en `pronostico_pedido`). El flujo terminó cuando las 53 corridas diarias
+de `ingesta_validacion` y `seguimiento_desempeno` y las 8 semanales de `pronostico_pedido` están en verde. No se ha medido el tiempo
+total en Docker; en una laptop espera decenas de minutos (el primer `preparacion_features` prepara un año de cortes y el
+entrenamiento inicial tarda ~2 min).
 
-Todos los parámetros están en `config/pipeline.yaml`. Las decisiones están en `DECISIONES.md`.
+**5. Ver los resultados**
 
-## Ingesta, validación y capas as-of
+```
+forecasts/pronosticos/fecha=<lunes>/rev=<N>.parquet             # pronóstico por tienda, familia y día (mediana y cuantiles p10/p90)
+forecasts/pedidos/fecha=<lunes>/rev=<N>.parquet                 # pedido sugerido por tienda y familia
+forecasts/pronosticos/fecha=<lunes>/rev=<N>.manifiesto.json     # trazabilidad: SHA de Git, hash de datos, modelo, corte, config
+data/monitoring/desempeno/fecha=<lunes>/rev=<N>.parquet         # WAPE, sesgo, costo y fill rate contra lo realmente vendido
+data/cuarentena/<fuente>/fecha=<D>/rev=<N>.parquet              # archivos rechazados (+ rev=<N>.motivos.json)
+models/campeon/                                                  # modelo vigente (+ metricas.json con la decisión de reemplazo)
+```
+
+```python
+# PYTHONPATH=src python
+from laboratorio.capas import load_as_of
+pedido = load_as_of("pedidos", "2017-08-14", capa="pronosticos")        # pedido sugerido del lunes 14
+cols = ["store_nbr", "family", "demanda_esperada", "cantidad_pedido", "nivel_servicio"]
+print(pedido[cols].sort_values("cantidad_pedido", ascending=False).head(10))
+desempeno = load_as_of("desempeno", "2017-08-21", capa="seguimiento")  # cómo le fue a cada pronóstico
+print(desempeno[desempeno.family == "TOTAL"][["date", "wape", "sesgo", "dias_observados", "alerta"]])
+```
+
+Detener y reiniciar:
+
+```bash
+docker compose down        # detiene; conserva datos y la base de Airflow
+docker compose down -v     # además borra la base de Airflow
+rm -rf data/bronze data/silver data/cuarentena data/inbox data/features data/monitoring forecasts/pronosticos forecasts/pedidos   # borra los resultados
+./iniciar.sh               # repetirlo es seguro: lo ya procesado no se vuelve a escribir
+```
+
+## Qué hace el flujo sin intervención manual
+
+| Situación | Qué hace el sistema |
+|---|---|
+| Un dato llega con retraso (ventas D+1, transacciones D+2, petróleo D+3) | Cada día se procesa lo que ya llegó; los features usan lo último conocido y `dias_desde_ultimo_dato` lo registra. Nada se lee "del futuro" (`load_as_of`). |
+| Llega una corrección (`_rev2`) | Se guarda como revisión nueva (la anterior no se toca). El seguimiento recalcula el desempeño con el dato corregido; los pronósticos ya publicados no se reescriben (ver DECISIONES). |
+| Un archivo es inválido (columnas, tipos, rangos, nulos, duplicados, tienda desconocida) | Va a `data/cuarentena/` con sus motivos; silver conserva la última revisión válida. El flujo sigue. |
+| Se repite una tarea o un día completo (reintento, backfill, reinicio) | Es idempotente: misma entrada, mismo resultado, sin duplicar. Una tarea fallida se reintenta 1 vez a los 1 min. |
+| Un DAG depende de otro que aún no termina | Sensores en modo `reschedule` (no ocupan slot) esperan hasta 6 h; los DAGs con orden estricto usan `depends_on_past`. |
+| No existe modelo campeón (primera corrida) | `pronosticar` entrena el inicial con la carga histórica; el backtest y la regla de reemplazo deciden entre LightGBM y la línea base. |
+| El desempeño empeora (WAPE de un pronóstico > `seguimiento.umbral_wape`) | Queda marcado `alerta` en el desempeño y se escribe una advertencia en el log. No cambia el modelo solo. |
+| Se cambian los costos | Se edita `config/costs.yaml`; el siguiente pedido los usa y su manifiesto cambia de hash. No se toca código. |
+
+Lo que **no** es automático (y está dicho en DECISIONES): el reentrenamiento periódico (se hace con `dvc repro`), el bloqueo del
+pedido si una fuente crítica queda en cuarentena, y descontar el inventario real del pedido (no hay datos de inventario).
+
+## Calidad de las recomendaciones
+
+Backtest temporal con 4 folds (lunes 2017-05-29 a 2017-06-19), modelo entrenado solo con lo conocido antes de cada corte
+(`models/campeon/metricas.json`):
+
+| | WAPE | Sesgo | Fill rate | Costo | Cobertura [p10, p90] |
+|---|---|---|---|---|---|
+| Línea base (media del mismo día de la semana) | 0.146 | +0.4 % | 0.980 | 1 204 755 | – |
+| LightGBM por cuantiles (campeón) | 0.126 | −1.9 % | 0.974 | 1 005 785 (−16.5 %) | 0.81 |
+
+Cómo leerlo:
+
+- Los costos de `config/costs.yaml` son **valores de referencia**: el costo y el "mejor" modelo cambian con los costos reales.
+- El pedido supone **inventario inicial cero** y no promociones futuras conocidas; es una necesidad bruta, no una orden neta
+  (ver más abajo y DECISIONES).
+- Durante el flujo, `seguimiento_desempeno` mide cada pronóstico contra lo vendido; esa es la medida de calidad en operación.
+- El modelo gana en 3 de 4 folds: la mejora es real pero no holgada.
+
+### Usar el pedido sugerido
+
+`cantidad_pedido` es lo que conviene tener disponible para cubrir los 7 días siguientes al lunes con el nivel de servicio
+`costo_faltante / (costo_faltante + costo_sobrante)` de cada familia. Para convertirlo en una orden de compra:
+
+```
+orden = max(0, cantidad_pedido − inventario disponible − pedidos en tránsito)
+```
+
+El inventario no está en los datos de Kaggle; ese descuento lo hace quien tenga el dato (o se agrega como fuente, ver DECISIONES).
+
+## Desarrollo local (sin Docker)
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt
+export PYTHONPATH=src
+
+pytest                 # pruebas con datos de ejemplo (tests/data/); el CI nunca usa dvc pull
+ruff check .
+
+python -m laboratorio.forecast.entrenamiento --preparar-capas   # = dvc repro: backtest, regla de reemplazo y modelo campeón
+python -m laboratorio.tareas ingestar 2017-07-03                 # una tarea suelta (ver TAREAS en src/laboratorio/tareas.py)
+```
+
+## Datos, DVC y trazabilidad
+
+Carpetas de datos (Git las ignora; en Git solo van `*.dvc` y `dvc.lock`):
+
+```
+data/raw/kaggle/   # zip de Kaggle                  (versionado con DVC: dvc add)
+models/campeon/    # modelo vigente                 (versionado con DVC: stage `entrenar` de dvc.yaml)
+forecasts/         # pronósticos, pedidos, manifiestos
+```
+
+```bash
+dvc repro      # reentrena y decide si el candidato reemplaza al campeón (regla en src/laboratorio/forecast/reemplazo.py)
+dvc push       # respalda en el remoto local (.dvc/config.local; solo esta máquina)
+dvc pull       # lo recupera
+```
+
+Si cambia el zip: `dvc add data/raw/kaggle/store-sales-time-series-forecasting.zip` y commitea el `.dvc` en un PR.
+
+Cada pronóstico tiene un manifiesto con el SHA de Git, el md5 del dato crudo (DVC), la versión del modelo y con qué datos se
+entrenó, la fecha de corte y el hash de la configuración. Para comprobar que se regenera idéntico:
+
+```bash
+PYTHONPATH=src python -m laboratorio.publicacion.reproducir 2017-08-14
+```
+
+Hace `git worktree` + `dvc checkout` de esa versión, regenera el pronóstico desde cero y compara los manifiestos (requiere que el
+pronóstico se haya generado con el árbol limpio). En Docker el SHA viene de `LABORATORIO_GIT_SHA`, que `iniciar.sh` exporta.
+
+## Capas as-of (referencia)
 
 ```
 data/bronze/<fuente>/fecha=<D>/rev=<N>.parquet      # ingesta: lo recibido, tal cual
 data/silver/<fuente>/fecha=<D>/rev=<N>.parquet      # validación: revisiones válidas
-data/cuarentena/<fuente>/fecha=<D>/rev=<N>.parquet  # revisiones rechazadas (+ _motivos)
+data/cuarentena/<fuente>/fecha=<D>/rev=<N>.parquet  # revisiones rechazadas (+ rev=<N>.motivos.json)
 ```
 
-Un día del flujo (ese día llega a la bandeja lo que toca, se ingesta y se valida):
+- Carga histórica: datos con fecha <= `2017-06-30` (`bandeja.fecha_corte`), leídos del zip. Lo posterior llega por la bandeja
+  (`data/inbox/`), un archivo por fecha y fuente, con su retraso; en algunas fechas el original trae errores y luego llega `_rev2`.
+  Solo el simulador (`laboratorio.inbox`) escribe en la bandeja; la ingesta únicamente la lee.
+- Cada fila lleva `revision`, `available_at` (el día en que el sistema la conoció) y `origen`. Cada escritura es atómica y
+  una revisión escrita nunca se modifica.
+- `load_as_of(fuente, corte)` devuelve, por fecha, la última revisión con `available_at <= corte` y falla (`FugaDeInformacion`)
+  si hubiera filas posteriores al corte.
+- Para que el as-of sea fiel, la ingesta corre **día por día** con la bandeja de ese mismo día simulado (lo hace el backfill).
+
+Un día a mano, sin Airflow:
 
 ```bash
 export PYTHONPATH=src
@@ -84,45 +211,5 @@ python -m laboratorio.ingest   --fecha-proceso 2017-07-01
 python -m laboratorio.validate --fecha-proceso 2017-07-01
 ```
 
-- El primer día (`2017-06-30`, la fecha de corte) se hace la carga histórica.
-- Todo es idempotente: repetir un día no cambia nada.
-- Cada archivo se escribe con reemplazo atómico.
-- Cada fila lleva `revision`, `available_at` (el día en que el sistema la conoció) y `origen`.
-- Silver solo recibe revisiones que pasan los esquemas de pandera definidos en `config/pipeline.yaml` (tipos, rangos, nulos, duplicados y fechas esperadas). Los motivos de cada rechazo quedan en `cuarentena/.../rev=N.motivos.json`.
-- Para leer lo que se sabía al cierre del día X:
-
-  ```python
-  from laboratorio.capas import load_as_of
-  ventas = load_as_of("ventas", "2017-07-20")  # nunca devuelve date ni available_at > corte
-  ```
-
-Para que el as-of sea fiel, la ingesta debe correr **día por día** con la bandeja de ese mismo día simulado: si recibe la bandeja completa, no tiene forma de saber cuándo llegó cada archivo.
-
-## Modelado
-
-```bash
-source .venv/bin/activate
-dvc repro            # backtest, regla de reemplazo y modelo campeón en models/campeon/
-dvc push             # respaldar el modelo en el remoto local
-```
-
-`dvc repro` corre `python -m laboratorio.forecast.entrenamiento --preparar-capas`: deja listas las capas
-(idempotente), hace el backtest temporal de la línea base y de LightGBM por cuantiles, decide con
-`forecast/reemplazo.py` y guarda el campeón en `models/campeon/` (`metricas.json` explica la decisión).
-Para pronosticar con él, `pronostico.modelo: lightgbm_cuantiles` en `config/pipeline.yaml`.
-
-## Publicación y trazabilidad
-
-Cada pronóstico semanal lleva un manifiesto (`forecasts/pronosticos/fecha=<D>/rev=<N>.manifiesto.json`) con el SHA de Git, el hash
-del dato crudo (DVC), la versión del modelo, la fecha de corte y el hash de la configuración. Para comprobar que se puede
-regenerar idéntico:
-
-```bash
-PYTHONPATH=src python -m laboratorio.publicacion.reproducir 2017-08-14
-```
-
-Hace `git worktree` + `dvc checkout` de esa versión, regenera el pronóstico desde cero y compara los manifiestos
-(requiere que el pronóstico se haya generado con el árbol limpio). El pedido sale de `config/costs.yaml` (o del archivo
-de `pedido.costos`): cambiar los costos cambia el pedido sin tocar código. En Docker exporta
-`LABORATORIO_GIT_SHA=$(git rev-parse HEAD)` antes de `docker compose up`.
-
+Todos los parámetros (periodo, retrasos, esquemas de validación, modelo, reglas de reemplazo, umbrales) están en
+`config/pipeline.yaml`; los costos en `config/costs.yaml`.

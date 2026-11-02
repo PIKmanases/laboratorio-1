@@ -25,3 +25,110 @@
 | 2026-11-02 | Reproducibilidad: `python -m laboratorio.publicacion.reproducir <fecha>` crea un `git worktree` en el SHA del manifiesto, hace `dvc checkout` (dato crudo y modelo de esa versión, desde la caché de DVC), regenera capas, features, pronóstico, pedido y manifiesto desde cero y exige que el manifiesto sea idéntico. Se niega si el original se generó con el árbol sucio. | El repositorio actual no se toca. Comparar el manifiesto completo cubre código, datos, modelo, configuración y el contenido de los resultados. El CI prueba lo mismo con datos de ejemplo (dos entornos independientes dan resultados idénticos); la corrida con DVC es local porque el CI no usa `dvc pull`. |
 | 2026-11-02 | `pronostico.modelo` pasa a `lightgbm_cuantiles` (campeón). El stage `entrenar` depende solo del código que afecta al modelo y de los parámetros que usa (`pronostico.horizonte_dias`, `anticipacion_dias`); publicar o cambiar `pronostico.modelo` no reentrena. Las pruebas fuerzan la línea base porque `models/` no está en Git. | Evita reentrenar (4 min) por cambios ajenos al modelo. |
 
+| 2026-11-02 | **El modelo se entrena as-of la carga histórica** (`modelado.fecha_entrenamiento: 2017-06-30`) y `pronostico.modelo: campeon` usa lo que diga `models/campeon`. Si no existe, la primera tarea `pronosticar` entrena el inicial. Antes se entrenaba con datos hasta 2017-08-21 y se usaba para pronosticar julio-agosto: fuga de información al pronosticar. | Con la fecha en la carga histórica, todo pronóstico del flujo es posterior al entrenamiento y no hay fuga; además el modelo depende solo de (código, zip, config), así que se puede entrenar antes del flujo (`dvc repro`) o dentro de él con el mismo resultado. Se corrigió al documentar la disponibilidad de la información. Backtest nuevo (lunes 2017-05-29 a 06-19): WAPE 0.146 → 0.126, costo −16.5 %, fill rate 0.974, cobertura 0.81; versión `907b92c85a`. Alternativa descartada: reentrenar cada semana as-of el pronóstico (mejor frescura, ~2 min por semana y el campeón dejaría de ser una sola versión de DVC); queda como evolución. |
+| 2026-11-02 | Un solo comando (`./iniciar.sh`) levanta Airflow y el servicio `airflow-orquestador` activa los DAGs y crea un backfill por DAG para todo el periodo, con `--reprocess-behavior failed` (repetirlo solo reintenta lo fallido). | Los DAGs nacen en pausa (para no correr nada al azar) y `catchup=False`, así que sin esto habría que activar y lanzar cuatro backfills a mano. Probado: sintaxis de los scripts y `docker compose config`; **no** se levantó el stack completo (memoria de la máquina de desarrollo). |
+
+## Disponibilidad de la información
+
+**Decisión.** Cada fuente llega con su retraso (ventas D+1, transacciones D+2, petróleo D+3; el petróleo no publica fines de semana).
+Cada fila lleva `available_at` (el día en que el sistema la conoció) y todo cálculo de un corte X lee con `load_as_of(fuente, X)`.
+El pronóstico del lunes X cubre X+1 … X+7 con ventas conocidas hasta X−1, transacciones hasta X−2 y el último precio de petróleo
+conocido. El calendario de feriados y las tiendas son de referencia y se conocen completos (los feriados se publican por adelantado).
+La carga histórica usa `available_at = fecha + retraso`, como si hubiera llegado a tiempo. El entrenamiento purga 11 días
+(7 de horizonte + 1 de anticipación + 1 de retraso de ventas + 3 de la corrección `_rev2`) para que toda etiqueta se conociera el día de la prueba.
+El modelo se entrena con lo conocido al inicio del flujo (ver fila del 2026-11-02).
+
+| Alternativa | Por qué no |
+|---|---|
+| Leer los CSV completos y filtrar por la columna `date` | Ignora cuándo se supo cada dato: una corrección que llegó 3 días después aparecería como si siempre hubiera estado. Es la fuga más común. |
+| Esperar a que las tres fuentes estén completas antes de pronosticar | Retrasaría el pedido hasta D+3 por el petróleo, la fuente que menos pesa. Se pronostica con lo último conocido y `dias_desde_ultimo_dato` queda como variable. |
+| Entrenar con todo el periodo y probar en el final | Fuga: el modelo vería días posteriores al corte. Se usa rolling origin con purga. |
+
+**Riesgos conocidos.** (1) Si una fuente no llega o queda en cuarentena, el flujo sigue con el dato anterior y no se bloquea ni se avisa más
+que por la variable de antigüedad. Alternativa: una compuerta de frescura que falle el DAG si ventas tiene más de N días de atraso.
+(2) `anticipacion_dias: 1` supone que se pide el lunes para cubrir desde el martes: no hay plazo de entrega real ni horario de corte.
+(3) Los retrasos son simulados con los de `config/pipeline.yaml`; en producción deben medirse y ajustarse.
+
+## Validación
+
+**Decisión.** Cada revisión de bronze se valida con pandera antes de entrar a silver, con esquemas armados desde `config/pipeline.yaml`
+(no en el código): columnas exactas, tipos, mínimos y máximos, nulos solo donde se permiten, claves únicas, `date` igual a la
+partición y no posterior a `available_at`, tiendas existentes, archivo no vacío y una sola revisión por archivo. Lo que falla va a
+`cuarentena` con los motivos y **silver conserva la última revisión válida**: un archivo malo no pisa un dato bueno. Se reportan todos
+los errores a la vez (`lazy=True`).
+
+| Alternativa | Por qué no |
+|---|---|
+| Fallar el DAG ante cualquier archivo inválido | Un solo archivo malo detendría todo el periodo; con `depends_on_past` bloquearía todos los días siguientes. |
+| Corregir automáticamente (recortar negativos, rellenar nulos) | Inventa datos sin que nadie lo sepa. Se prefiere aislar y que la fuente corrija. |
+| Great Expectations / Soda | Más herramientas y otro lugar donde definir reglas; pandera cubre los casos con poca infraestructura. |
+
+**Lo que la validación NO detecta** (se prefiere decirlo): un archivo que pasa los rangos pero viene incompleto (hoy basta con que
+tenga al menos una fila, no se exigen las 1 782 combinaciones tienda-familia de un día), valores plausibles pero erróneos (la
+simulación inyecta justo eso: factores de 0.5–0.8 o 1.2–1.5 en el 5 % de las filas de ciertas fechas, que pasan los rangos y solo
+se corrigen cuando llega el `_rev2`), valores atípicos frente a la historia, ni la consistencia entre fuentes (ventas vs. transacciones).
+Alternativas, de menor a mayor costo: verificar completitud por día contra el calendario de tiendas y familias; comparar cada día con
+su media móvil y mandar a revisión si se desvía mucho; conciliar ventas con transacciones.
+
+## Manejo de correcciones
+
+**Decisión.** Una corrección es una revisión nueva (`rev=2`) con su propio `available_at`; nunca se modifica una revisión escrita.
+`load_as_of` devuelve, por fecha, la última revisión conocida al corte, así que se puede reconstruir lo que se sabía en cualquier día.
+Las capas derivadas guardan un linaje (qué revisión de cada fecha usaron) y solo escriben una revisión nueva si cambió esa firma.
+Consecuencias: (a) los **features y el pronóstico ya publicados no se recalculan** cuando llega una corrección posterior, porque
+representan lo que se sabía ese día y sobre eso se tomó la decisión; (b) el **seguimiento sí se recalcula** con el dato corregido,
+porque mide contra la mejor verdad disponible; (c) los datos corregidos entran en los cortes posteriores y en el reentrenamiento.
+
+| Alternativa | Por qué no |
+|---|---|
+| Sobrescribir el dato en su lugar | Se pierde qué se sabía cuándo; el backtest y la auditoría dejan de ser fieles y se rompe la reproducibilidad. |
+| Recalcular y reemitir los pronósticos y pedidos pasados al llegar cada corrección | Cambia pedidos que ya se ejecutaron y mezcla la decisión con información que no existía. Solo tendría sentido para un pedido todavía no emitido. |
+| Ignorar las correcciones | El seguimiento y el reentrenamiento medirían contra datos erróneos. |
+
+**Límites.** La purga de 11 días supone que una corrección llega como máximo 3 días después (`revisiones.retraso_extra_dias`); una
+corrección más tardía se ingesta igual, pero el entrenamiento podría haber usado antes el valor original. Recalcular un día pasado con
+otra configuración cuando ya hay revisiones posteriores falla a propósito (`RevisionFueraDeOrden`): hay que borrar la capa derivada y
+repetir el backfill desde el inicio, para no dejar un histórico mezclado. Cambiar `costs.yaml` afecta al siguiente pedido; los ya emitidos conservan los costos con que se calcularon (y su manifiesto).
+
+## Supuesto sobre inventario
+
+**Supuesto.** Los datos de Kaggle **no incluyen inventario**, ni pedidos en tránsito, plazos de entrega, vida útil o capacidad.
+Por eso el pedido es un problema de una sola decisión por tienda-familia (vendedor de periódicos): se supone **inventario inicial cero**,
+reposición instantánea al inicio del horizonte (7 días), sin pedidos pendientes y sin arrastre de sobrantes a la semana siguiente. La
+cantidad es el cuantil `costo_faltante / (costo_faltante + costo_sobrante)` de la demanda de la semana (normal con media = suma de
+medianas y sigma = raíz de la suma de varianzas diarias del modelo). Los costos de `config/costs.yaml` (perecibles con sobrante más
+caro) son **valores de referencia**, no del negocio.
+
+Implicaciones para quien use la recomendación:
+- `cantidad_pedido` es una **necesidad bruta**: la orden de compra es `max(0, cantidad_pedido − inventario disponible − en tránsito)`. Esa resta no la hace el sistema porque no tiene el dato.
+- Se usa **venta como demanda**. Si hubo quiebres de stock, la venta es menor que la demanda (demanda censurada) y el modelo la subestima; los ceros de ventas pueden ser falta de producto y no falta de demanda.
+- El fill rate y el costo del backtest se calculan con el mismo supuesto (pedido semanal, inventario cero), no representan un nivel de servicio diario real.
+
+| Alternativa | Qué exigiría | Por qué no se hizo |
+|---|---|---|
+| Política (s, S) o de revisión periódica con inventario simulado | Inventario real, plazos de entrega, frecuencia de pedido | Sin datos habría que inventarlos; los resultados parecerían más reales de lo que son. |
+| Estimar demanda censurada (p. ej. tratar días de ceros en series con ventas altas como faltantes, o un modelo tobit) | Saber cuándo hubo quiebre | Sin dato de stock no se distingue "sin demanda" de "sin producto". |
+| Aceptar una fuente `inventario` en la bandeja y descontarla | Esquema, validación, retraso y revisiones propios | Es el siguiente paso natural y encaja en la arquitectura (otra fuente as-of); se deja como evolución. |
+
+## Supuesto sobre promociones
+
+**Supuesto.** `onpromotion` (cantidad de productos en promoción de esa tienda y familia ese día) solo se conoce para días ya vendidos:
+viene en las filas de ventas. El zip del flujo no incluye `test.csv` (donde Kaggle publica las promociones de los días a pronosticar) y
+el simulador solo entrega los campos de `train.csv`. Por eso el modelo usa únicamente `promo_28`, la proporción histórica de promoción de
+los últimos 28 días, y **no** la promoción del día objetivo.
+
+Implicación: el modelo no reacciona a una promoción planificada para la semana que se pronostica; en semanas con promociones fuertes se
+espera subestimación, y en semanas sin promociones, una ligera sobreestimación si la ventana tuvo muchas. No se midió cuánto.
+
+| Alternativa | Por qué no / cuándo sí |
+|---|---|
+| Usar `onpromotion` del día objetivo como variable | En el backtest sería fuga: ese valor no se conocía al corte en este flujo. Solo es válido si el plan de promociones se **publica por adelantado**. |
+| Fuente nueva `promociones_planeadas`, ingerida como los feriados (con su `available_at` = fecha de publicación) | Es lo correcto si el negocio planifica promociones con anticipación; requiere ese dato, que hoy no existe en el flujo. Es la evolución recomendada. |
+| Multiplicador de uplift manual sobre el pedido | Introduce intervención manual sin base en datos; mejor modelar el efecto con la fuente anterior. |
+| Escenarios (con y sin promoción) | Duplica salidas sin saber cuál ocurre; útil solo cuando el plan existe. |
+
+## Qué queda fuera, a propósito
+
+Reentrenamiento programado en Airflow (hoy: `dvc repro` bajo demanda, con la regla de reemplazo ya implementada y probada);
+compuerta de frescura y de completitud de datos; inventario real; plan de promociones; costos reales. Todo lo anterior está
+descrito arriba con su alternativa y deja la arquitectura lista para agregarlo como una fuente o una tarea más.

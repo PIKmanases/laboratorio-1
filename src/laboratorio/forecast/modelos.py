@@ -5,12 +5,15 @@ fila (tienda, familia, fecha_objetivo). Se elige en `config/pipeline.yaml`
 (`pronostico.modelo`):
 
 - `media_dia_semana`, `media_28`: líneas base, sin entrenamiento.
-- `lightgbm_cuantiles`: el modelo campeón guardado en `models/campeon` (ver
-  `forecast.entrenamiento`); además del pronóstico trae cuantiles y `sigma_diario`.
+- `lightgbm_cuantiles`: el modelo guardado en `models/campeon` (ver `forecast.entrenamiento`);
+  además del pronóstico trae cuantiles y `sigma_diario`.
+- `campeon`: lo que diga `models/campeon/meta.json` (LightGBM, o la línea base si la regla de
+  reemplazo no aprobó al candidato).
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -19,6 +22,7 @@ from laboratorio.config import RAIZ, cargar_config
 from laboratorio.features.predictores import CLAVES
 
 LIGHTGBM = "lightgbm_cuantiles"
+CAMPEON = "campeon"
 
 
 def media_dia_semana(p: pd.DataFrame) -> pd.Series:
@@ -35,6 +39,21 @@ MODELOS = {"media_dia_semana": media_dia_semana, "media_28": media_28}
 
 def dir_campeon(cfg: dict | None = None) -> Path:
     return RAIZ / (cfg or cargar_config())["capas"]["modelos"] / "campeon"
+
+
+def hay_campeon(cfg: dict | None = None) -> bool:
+    return (dir_campeon(cfg) / "meta.json").exists()
+
+
+def modelo_vigente(cfg: dict) -> str:
+    """Nombre concreto del modelo a usar: `pronostico.modelo`, o el del campeón si dice `campeon`."""
+    nombre = cfg["pronostico"]["modelo"]
+    if nombre != CAMPEON:
+        return nombre
+    if not hay_campeon(cfg):
+        raise FileNotFoundError("no hay modelo campeón en models/campeon: corre dvc repro o la tarea pronosticar")
+    receta = json.loads((dir_campeon(cfg) / "meta.json").read_text(encoding="utf-8"))["receta"]
+    return receta["modelo"] if receta["tipo"] == "baseline" else LIGHTGBM
 
 
 def pronosticar(predictores: pd.DataFrame, modelo: str, dir_modelo: Path | None = None) -> pd.DataFrame:
