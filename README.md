@@ -188,6 +188,7 @@ espera los features de ese día. Si lanzas a mano un DAG de más abajo antes que
 | `No runs to create for Dag ...` | Rango de fechas sin hora (ver arriba). |
 | `Another backfill is running for Dag ...` | Hay un backfill abierto. Espera a que termine o cancélalo en la UI (*Backfills*). |
 | `airflow-dag-processor` aparece *unhealthy* con carga alta | Es el chequeo, no el proceso: `docker compose ps` y los logs del dag-processor lo confirman. Se recupera solo al bajar la carga. |
+| Una corrida quedó en rojo y las siguientes se quedan en cola | Por `depends_on_past` y `max_active_runs=1`, un run fallido detiene al resto de su backfill. Cancela ese backfill y relánzalo (solo repite lo fallido): `T=$(curl -s -X POST localhost:8080/auth/token -H 'Content-Type: application/json' -d '{"username":"admin","password":"admin"}' \| python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")`, luego `curl -X PUT localhost:8080/api/v2/backfills/<id>/cancel -H "Authorization: Bearer $T"` (el `<id>` está en *Browse → Backfills*) y `docker compose run --rm -e ORQUESTAR_DAGS="<dag>" airflow-orquestador`. |
 | Una corrida queda en rojo | UI → corrida → tarea → *Log*. Se reintenta sola 1 vez; si persiste, corrige y vuelve a lanzar el backfill (solo repite lo fallido). |
 
 Detener y reiniciar:
