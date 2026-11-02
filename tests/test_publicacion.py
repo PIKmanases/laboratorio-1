@@ -111,7 +111,11 @@ def test_publicar_conserva_el_sha_original(entorno_pub, monkeypatch):
 
 def test_sha_desde_variable_de_entorno(monkeypatch):
     monkeypatch.setenv(manifiesto.ENV_SHA, "abc123")
-    assert manifiesto.estado_git() == {"sha": "abc123", "sucio": None}
+    assert manifiesto.estado_git() == {"sha": "abc123", "sucio": None}  # el árbol no se conoce
+    monkeypatch.setenv(manifiesto.ENV_SUCIO, "1")
+    assert manifiesto.estado_git() == {"sha": "abc123", "sucio": True}
+    monkeypatch.setenv(manifiesto.ENV_SUCIO, "0")
+    assert manifiesto.estado_git() == {"sha": "abc123", "sucio": False}
 
 
 def test_publicar_exige_pronostico_y_pedido(cfg_prueba):

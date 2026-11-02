@@ -6,6 +6,9 @@ cambia nada y, si cambió algún insumo (por ejemplo, llegó un `_rev2`), reproc
 solo las particiones afectadas. Devuelven un resumen serializable (queda en XCom).
 
 Uso sin Airflow: `python -m laboratorio.tareas <tarea> AAAA-MM-DD`.
+
+Los imports pesados (pandas, pandera, LightGBM...) están dentro de cada tarea: Airflow importa este
+módulo al leer cada DAG y en cada despertar de un sensor, y debe ser rápido.
 """
 
 from __future__ import annotations
@@ -14,29 +17,12 @@ import logging
 import sys
 from datetime import date, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import pandas as pd
-
-from laboratorio.capas import (
-    COLUMNAS_CONTROL,
-    escribir_derivado,
-    insumos_de,
-    leer_asof,
-    leer_linaje,
-    listar_particiones,
-    listar_revisiones,
-    ruta_particion,
-)
 from laboratorio.config import RAIZ, cargar_config
-from laboratorio.features.construccion import predictores_del_corte
-from laboratorio.forecast import entrenamiento, modelos
-from laboratorio.forecast.modelos import pronosticar as aplicar_modelo
-from laboratorio.inbox import simulador
-from laboratorio.ingest import ingesta
-from laboratorio.monitoring.desempeno import evaluar
-from laboratorio.orders.pedido import calcular_pedido
-from laboratorio.publicacion import manifiesto
-from laboratorio.validate import validacion
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 log = logging.getLogger(__name__)
 
@@ -54,6 +40,7 @@ def _capa(cfg: dict, nombre: str) -> Path:
 
 
 def _sin_control(df: pd.DataFrame) -> pd.DataFrame:
+    from laboratorio.capas import COLUMNAS_CONTROL
     return df.drop(columns=[c for c in [*COLUMNAS_CONTROL, "date"] if c in df.columns])
 
 
@@ -62,6 +49,7 @@ def _sin_control(df: pd.DataFrame) -> pd.DataFrame:
 
 def recibir_bandeja(fecha: str | date, cfg: dict | None = None) -> dict:
     """Simulación: deja en la bandeja lo que llegó hasta `fecha`. En producción no hace nada."""
+    from laboratorio.inbox import simulador
     cfg = _cfg(cfg)
     if not cfg["simulacion"]["activa"]:
         return {"simulacion": False}
@@ -72,11 +60,13 @@ def recibir_bandeja(fecha: str | date, cfg: dict | None = None) -> dict:
 
 
 def ingestar(fecha: str | date, cfg: dict | None = None) -> dict:
+    from laboratorio.ingest import ingesta
     historico, bandeja = ingesta.ingestar(**ingesta.desde_config(_cfg(cfg), RAIZ), fecha_proceso=_fecha(fecha))
     return {"historico": historico.revisiones_nuevas, "bandeja": bandeja.revisiones_nuevas}
 
 
 def validar(fecha: str | date, cfg: dict | None = None) -> dict:
+    from laboratorio.validate import validacion
     r = validacion.validar(**validacion.desde_config(_cfg(cfg), RAIZ), fecha_proceso=_fecha(fecha))
     return {"validas": r.validas, "cuarentena": r.rechazadas}
 
@@ -85,6 +75,8 @@ def validar(fecha: str | date, cfg: dict | None = None) -> dict:
 
 
 def _preparar_corte(cfg: dict, corte: date) -> int | None:
+    from laboratorio.capas import escribir_derivado, insumos_de
+    from laboratorio.features.construccion import predictores_del_corte
     f, p = cfg["features"], cfg["pronostico"]
     df, entradas = predictores_del_corte(cfg, corte)
     if df.empty:
@@ -103,6 +95,7 @@ def preparar_features(fecha: str | date, cfg: dict | None = None, historia: bool
 
     Con `historia=False` solo se prepara el corte del día (lo que necesita un pronóstico).
     """
+    from laboratorio.capas import listar_particiones
     cfg, dia = _cfg(cfg), _fecha(fecha)
     existentes = listar_particiones(_capa(cfg, "features"), "predictores")
     escritas = {}
@@ -120,6 +113,9 @@ def preparar_features(fecha: str | date, cfg: dict | None = None, historia: bool
 
 
 def pronosticar(fecha: str | date, cfg: dict | None = None) -> dict:
+    from laboratorio.capas import escribir_derivado, insumos_de, leer_asof
+    from laboratorio.forecast import entrenamiento, modelos
+    from laboratorio.forecast.modelos import pronosticar as aplicar_modelo
     cfg, dia = _cfg(cfg), _fecha(fecha)
     pred = leer_asof(_capa(cfg, "features"), "predictores", dia, desde=dia, hasta=dia)
     if pred.empty:
@@ -137,6 +133,8 @@ def pronosticar(fecha: str | date, cfg: dict | None = None) -> dict:
 
 
 def generar_pedido(fecha: str | date, cfg: dict | None = None) -> dict:
+    from laboratorio.capas import escribir_derivado, insumos_de, leer_asof
+    from laboratorio.orders.pedido import calcular_pedido
     cfg, dia = _cfg(cfg), _fecha(fecha)
     pron = leer_asof(_capa(cfg, "pronosticos"), "pronosticos", dia, desde=dia, hasta=dia)
     pred = leer_asof(_capa(cfg, "features"), "predictores", dia, desde=dia, hasta=dia)
@@ -151,6 +149,8 @@ def generar_pedido(fecha: str | date, cfg: dict | None = None) -> dict:
 
 def publicar(fecha: str | date, cfg: dict | None = None) -> dict:
     """Manifiesto de trazabilidad del pronóstico y el pedido del corte `fecha` (ver `publicacion.manifiesto`)."""
+    from laboratorio.capas import leer_asof
+    from laboratorio.publicacion import manifiesto
     cfg, dia = _cfg(cfg), _fecha(fecha)
     pron = leer_asof(_capa(cfg, "pronosticos"), "pronosticos", dia, desde=dia, hasta=dia)
     ped = leer_asof(_capa(cfg, "pronosticos"), "pedidos", dia, desde=dia, hasta=dia)
@@ -182,6 +182,7 @@ def dias_de_pronostico(desde: date, hasta: date, cfg: dict | None = None) -> lis
 
 def pronosticos_previos_listos(fecha: str | date, cfg: dict | None = None) -> bool:
     """True si ya existen el pronóstico y el pedido de todos los días de pronóstico anteriores a `fecha`."""
+    from laboratorio.capas import listar_revisiones, ruta_particion
     cfg, dia = _cfg(cfg), _fecha(fecha)
     inicio = date.fromisoformat(cfg["orquestacion"]["inicio"])
     dir_pron = _capa(cfg, "pronosticos")
@@ -198,6 +199,18 @@ def seguir_desempeno(fecha: str | date, cfg: dict | None = None) -> dict:
     Una partición de desempeño se reprocesa (revisión nueva) cuando llegan más días
     observados o una revisión de un día ya evaluado.
     """
+    import pandas as pd
+
+    from laboratorio.capas import (
+        escribir_derivado,
+        insumos_de,
+        leer_asof,
+        leer_linaje,
+        listar_particiones,
+        listar_revisiones,
+        ruta_particion,
+    )
+    from laboratorio.monitoring.desempeno import evaluar
     cfg, dia = _cfg(cfg), _fecha(fecha)
     dir_pron, dir_seg, silver = _capa(cfg, "pronosticos"), _capa(cfg, "seguimiento"), _capa(cfg, "silver")
     umbral = cfg["seguimiento"]["umbral_wape"]

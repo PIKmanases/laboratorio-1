@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 
 from laboratorio.config import cargar_config
-from laboratorio.forecast import dataset, evaluacion, modelos
+from laboratorio.forecast import dataset, entrenamiento, evaluacion, modelos
 from laboratorio.forecast.entrenamiento import guardar_campeon, leer_campeon
 from laboratorio.forecast.lgbm import CATEGORICAS, NUMERICAS, ModeloCuantiles, pronosticar
 from laboratorio.orders.pedido import calcular_pedido
@@ -299,7 +299,7 @@ def test_pronosticar_entrena_el_campeon_inicial_una_sola_vez(tmp_path, cfg_prueb
         llamadas.append(c)
         guardar_campeon(tmp_path / "models" / "campeon", evaluacion.receta_baseline(c), {"version": "v0"})
 
-    monkeypatch.setattr(tareas.entrenamiento, "entrenar", entrenar_falso)
+    monkeypatch.setattr(entrenamiento, "entrenar", entrenar_falso)
     dia = date(2017, 1, 4)
     tareas.procesar_capas_hasta(dia, cfg)
     tareas.preparar_features(dia, cfg, historia=False)

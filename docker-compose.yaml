@@ -26,6 +26,7 @@ x-airflow-comun: &airflow-comun
     PYTHONPATH: /opt/proyecto/src
     # El contenedor no tiene .git: el manifiesto toma el SHA de aquí (export LABORATORIO_GIT_SHA=$(git rev-parse HEAD)).
     LABORATORIO_GIT_SHA: ${LABORATORIO_GIT_SHA:-}
+    LABORATORIO_GIT_SUCIO: ${LABORATORIO_GIT_SUCIO:-}
   volumes:
     - ./dags:/opt/airflow/dags:ro
     - ./src:/opt/proyecto/src:ro
