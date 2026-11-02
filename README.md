@@ -4,6 +4,11 @@ Pronóstico semanal de ventas y pedido sugerido por tienda y familia (competenci
 [Store Sales – Time Series Forecasting](https://www.kaggle.com/competitions/store-sales-time-series-forecasting) de Kaggle),
 orquestado con Airflow y reproducible (Git + DVC).
 
+**Documentos:**
+[Documento de pruebas y evidencia](docs/evidencia/reporte.md) (ejecuciones en Airflow, comparación de modelos, seguimiento del desempeño y capturas) ·
+[Decisiones de diseño](DECISIONES.md) ·
+versión de la entrega: tag `entrega-lab1`.
+
 ## Puesta en marcha (copiar y pegar)
 
 **Requisitos:** Git y Docker con Compose, y unos 8 GB de RAM libres para Docker (estimación: Airflow + Postgres + el
