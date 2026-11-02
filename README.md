@@ -97,3 +97,16 @@ python -m laboratorio.validate --fecha-proceso 2017-07-01
   ```
 
 Para que el as-of sea fiel, la ingesta debe correr **día por día** con la bandeja de ese mismo día simulado: si recibe la bandeja completa, no tiene forma de saber cuándo llegó cada archivo.
+
+## Modelado
+
+```bash
+source .venv/bin/activate
+dvc repro            # backtest, regla de reemplazo y modelo campeón en models/campeon/
+dvc push             # respaldar el modelo en el remoto local
+```
+
+`dvc repro` corre `python -m laboratorio.forecast.entrenamiento --preparar-capas`: deja listas las capas
+(idempotente), hace el backtest temporal de la línea base y de LightGBM por cuantiles, decide con
+`forecast/reemplazo.py` y guarda el campeón en `models/campeon/` (`metricas.json` explica la decisión).
+Para pronosticar con él, `pronostico.modelo: lightgbm_cuantiles` en `config/pipeline.yaml`.

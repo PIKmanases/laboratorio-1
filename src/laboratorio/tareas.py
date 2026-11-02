@@ -28,11 +28,10 @@ from laboratorio.capas import (
     ruta_particion,
 )
 from laboratorio.config import RAIZ, cargar_config
-from laboratorio.features.predictores import preparar_predictores
+from laboratorio.features.construccion import predictores_del_corte
 from laboratorio.forecast.modelos import pronosticar as aplicar_modelo
 from laboratorio.inbox import simulador
 from laboratorio.ingest import ingesta
-from laboratorio.ingest.ingesta import DIR_REFERENCIA
 from laboratorio.monitoring.desempeno import evaluar
 from laboratorio.orders.pedido import calcular_pedido
 from laboratorio.validate import validacion
@@ -85,28 +84,13 @@ def validar(fecha: str | date, cfg: dict | None = None) -> dict:
 
 def _preparar_corte(cfg: dict, corte: date) -> int | None:
     f, p = cfg["features"], cfg["pronostico"]
-    silver, bronze = _capa(cfg, "silver"), _capa(cfg, "bronze")
-    desde = corte - timedelta(days=f["ventana_dias"] + 7)
-    ventas = leer_asof(silver, "ventas", corte, desde=desde)
-    transacciones = leer_asof(silver, "transacciones", corte, desde=desde)
-    petroleo = leer_asof(silver, "petroleo", corte, desde=desde)
-    df = preparar_predictores(
-        ventas,
-        transacciones,
-        petroleo,
-        pd.read_parquet(bronze / DIR_REFERENCIA / "stores.parquet"),
-        pd.read_parquet(bronze / DIR_REFERENCIA / "holidays_events.parquet"),
-        corte,
-        f["ventana_dias"],
-        p["horizonte_dias"],
-        p["anticipacion_dias"],
-    )
+    df, entradas = predictores_del_corte(cfg, corte)
     if df.empty:
         return None
     insumos = {
-        **insumos_de(ventas, "ventas"),
-        **insumos_de(transacciones, "transacciones"),
-        **insumos_de(petroleo, "petroleo"),
+        **insumos_de(entradas["ventas"], "ventas"),
+        **insumos_de(entradas["transacciones"], "transacciones"),
+        **insumos_de(entradas["petroleo"], "petroleo"),
         "parametros": {**f, "horizonte_dias": p["horizonte_dias"], "anticipacion_dias": p["anticipacion_dias"]},
     }
     return escribir_derivado(_capa(cfg, "features"), "predictores", corte, df, insumos, available_at=corte)

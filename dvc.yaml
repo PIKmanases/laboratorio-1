@@ -1,1 +1,18 @@
-stages: {}
+stages:
+  entrenar:
+    desc: Backtest temporal, decisión de reemplazo y modelo campeón (LightGBM por cuantiles).
+    cmd: PYTHONPATH=src python -m laboratorio.forecast.entrenamiento --preparar-capas
+    deps:
+      - data/raw/kaggle/store-sales-time-series-forecasting.zip
+      - src/laboratorio
+      - config/costs.yaml
+    params:
+      - config/pipeline.yaml:
+          - features
+          - pronostico
+          - modelado
+    outs:
+      # persist: el campeón anterior se conserva entre corridas porque la regla de
+      # reemplazo lo compara con el candidato.
+      - models/campeon:
+          persist: true
