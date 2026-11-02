@@ -100,3 +100,6 @@ Pronóstico del 2017-07-03, por familia: las 5 mejores y las 5 peores por WAPE.
 |---|---|---|---|---|---|---|
 | 2017-07-03 | f4612460da | lightgbm_cuantiles | 907b92c85a | b5cf65e315 | ed0201570c | 1d00130978 |
 | 2017-07-10 | f4612460da | lightgbm_cuantiles | 907b92c85a | b5cf65e315 | ed0201570c | 6c2ce7311c |
+
+## 5. Captura de pantalla
+<img width="1797" height="885" alt="image" src="https://github.com/user-attachments/assets/7e4fc400-a7da-4999-8c8b-312c083be901" />
