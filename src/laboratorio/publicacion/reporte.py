@@ -120,7 +120,7 @@ def seccion_modelos(cfg: dict) -> str:
         "",
         "Costo por corte de prueba (menor es mejor):",
         "",
-        tabla([[c, _num(a, "{:,.0f}"), _num(b, "{:,.0f}"), "candidato" if b < a else "campeón"]
+        tabla([[c, _num(a, "{:,.0f}"), _num(b, "{:,.0f}"), "candidato" if b < a else "anterior"]
                for c, a, b in zip(cand["cortes_prueba"], ant["costo_por_fold"], cand["costo_por_fold"], strict=True)],
               ["Corte", "Costo campeón anterior", "Costo candidato", "Gana"]),
         "",
@@ -188,7 +188,7 @@ def seccion_desempeno(cfg: dict, asof: date) -> str:
         )
     return (
         f"Desempeño vigente al {asof} (umbral de alerta: WAPE > {umbral}). `Días obs.` = días del horizonte ya vendidos; el costo y "
-        "el fill rate solo existen con el horizonte completo. `Rev.` > 1 indica que se recalculó por una corrección de datos.\n\n"
+        "el fill rate solo existen con el horizonte completo. `Rev.` = veces que se recalculó el desempeño de ese pronóstico: una por cada día nuevo observado y otra por cada corrección de datos (`_rev2`).\n\n"
         + tabla(filas, ["Corte", "Días obs.", "WAPE", "Sesgo", "RMSLE", "Fill rate", "Costo", "Estado", "Rev."])
         + resumen
     )
