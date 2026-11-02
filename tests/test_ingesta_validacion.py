@@ -73,7 +73,9 @@ def test_carga_historica_hasta_la_fecha_de_corte(entorno):
             assert list(listar_revisiones(particion)) == [1]
             df = pd.read_parquet(listar_revisiones(particion)[1])
             assert set(df["revision"]) == {1}
-            assert set(df["available_at"]) == {pd.Timestamp(CORTE)}
+            # Disponible cuando se habría conocido: fecha + retraso de la fuente.
+            retraso = timedelta(days=entorno["ing"]["retrasos"][fuente])
+            assert set(df["available_at"]) == {pd.Timestamp(fecha + retraso)}
     assert (bronze / "referencia" / "stores.parquet").exists()
 
 

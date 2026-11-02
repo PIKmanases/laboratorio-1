@@ -15,14 +15,18 @@ DIR_EJEMPLO = Path(__file__).parent / "data" / "kaggle"
 ARCHIVOS_KAGGLE = ["train.csv", "stores.csv", "holidays_events.csv", "oil.csv", "transactions.csv"]
 
 
-@pytest.fixture
-def zip_kaggle_ejemplo(tmp_path: Path) -> Path:
-    """Arma un zip con la misma forma que el de Kaggle a partir de los CSV de ejemplo."""
-    ruta = tmp_path / "store-sales-time-series-forecasting.zip"
+def crear_zip_ejemplo(directorio: Path) -> Path:
+    ruta = directorio / "store-sales-time-series-forecasting.zip"
     with zipfile.ZipFile(ruta, "w") as z:
         for nombre in ARCHIVOS_KAGGLE:
             z.write(DIR_EJEMPLO / nombre, arcname=nombre)
     return ruta
+
+
+@pytest.fixture
+def zip_kaggle_ejemplo(tmp_path: Path) -> Path:
+    """Arma un zip con la misma forma que el de Kaggle a partir de los CSV de ejemplo."""
+    return crear_zip_ejemplo(tmp_path)
 
 
 # --- Flujo diario con datos de ejemplo ------------------------------------------------
@@ -83,3 +87,22 @@ def entregas_planeadas(e):
 def revisadas(e):
     """(fuente, fecha) que reciben _rev2 -> día en que llega."""
     return {(x.fuente, x.fecha_dato): x.fecha_llegada for x in entregas_planeadas(e) if x.revision == 2}
+
+
+def crear_cfg_prueba(directorio: Path, zip_ejemplo: Path) -> dict:
+    """config/pipeline.yaml real con rutas absolutas en `directorio` y fechas de los datos de ejemplo."""
+    from laboratorio.config import cargar_config
+
+    cfg = cargar_config()
+    cfg["datos"]["zip_kaggle"] = str(zip_ejemplo)
+    cfg["bandeja"].update(dir=str(directorio / "inbox"), fecha_corte=CORTE.isoformat(), fecha_fin=FIN.isoformat())
+    cfg["bandeja"]["revisiones"]["fraccion_fechas"] = 1.0  # todas las fechas reciben _rev2
+    cfg["capas"] = {nombre: str(directorio / nombre) for nombre in cfg["capas"]}
+    cfg["features"]["historia_cortes_dias"] = 3
+    cfg["orquestacion"]["inicio"] = CORTE.isoformat()
+    return cfg
+
+
+@pytest.fixture
+def cfg_prueba(zip_kaggle_ejemplo, tmp_path):
+    return crear_cfg_prueba(tmp_path, zip_kaggle_ejemplo)

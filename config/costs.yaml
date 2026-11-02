@@ -1,1 +1,22 @@
-# Costos del producto (versionado)
+# Costos unitarios para el cálculo del pedido (newsvendor), versionados.
+# VALORES DE REFERENCIA: reemplazar por los costos reales del negocio.
+#   costo_faltante: margen perdido por cada unidad de demanda no atendida (underage).
+#   costo_sobrante: costo de cada unidad pedida que no se vende (merma o almacenaje, overage).
+# Nivel de servicio objetivo = costo_faltante / (costo_faltante + costo_sobrante).
+moneda: USD
+
+por_defecto:
+  costo_faltante: 1.0
+  costo_sobrante: 0.25
+
+# Perecibles: sobrar cuesta más (merma).
+por_familia:
+  BREAD/BAKERY:   {costo_faltante: 1.0, costo_sobrante: 0.7}
+  DAIRY:          {costo_faltante: 1.0, costo_sobrante: 0.5}
+  DELI:           {costo_faltante: 1.0, costo_sobrante: 0.6}
+  EGGS:           {costo_faltante: 1.0, costo_sobrante: 0.5}
+  MEATS:          {costo_faltante: 1.0, costo_sobrante: 0.7}
+  POULTRY:        {costo_faltante: 1.0, costo_sobrante: 0.7}
+  PREPARED FOODS: {costo_faltante: 1.0, costo_sobrante: 0.8}
+  PRODUCE:        {costo_faltante: 1.0, costo_sobrante: 0.8}
+  SEAFOOD:        {costo_faltante: 1.0, costo_sobrante: 0.8}

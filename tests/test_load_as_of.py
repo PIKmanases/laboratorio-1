@@ -32,10 +32,12 @@ def capas(e):
 def esperado(e, fuente, cutoff):
     """(fecha, revision) que debería devolver load_as_of, calculado del plan del simulador."""
     esperado = {}
-    if cutoff >= CORTE:  # la carga histórica está disponible desde la fecha de corte
-        with zipfile.ZipFile(e["ing"]["ruta_zip"]) as z:
-            fechas = pd.read_csv(z.open(e["ing"]["archivos"][fuente]))["date"]
-        esperado |= {date.fromisoformat(f): 1 for f in fechas if f <= CORTE.isoformat()}
+    # Carga histórica: cada fecha está disponible desde fecha + retraso de su fuente.
+    retraso = timedelta(days=e["ing"]["retrasos"][fuente])
+    with zipfile.ZipFile(e["ing"]["ruta_zip"]) as z:
+        fechas = pd.read_csv(z.open(e["ing"]["archivos"][fuente]))["date"]
+    historia = [date.fromisoformat(f) for f in fechas if f <= CORTE.isoformat()]
+    esperado |= {f: 1 for f in historia if f + retraso <= cutoff}
     for x in entregas_planeadas(e):
         if x.fuente == fuente and x.fecha_llegada <= cutoff:
             esperado[x.fecha_dato] = max(esperado.get(x.fecha_dato, 0), x.revision)
@@ -112,3 +114,25 @@ def test_falla_si_una_particion_esconde_filas_del_futuro(flujo):
 
     with pytest.raises(FugaDeInformacion):
         load_as_of("ventas", date(2017, 1, 5), dir_capa=dir_silver)
+
+
+# --- Particiones derivadas ------------------------------------------------------------
+
+
+def test_derivado_reprocesar_un_dia_pasado_no_crea_revisiones_fuera_de_orden(tmp_path):
+    from laboratorio.capas import RevisionFueraDeOrden, escribir_derivado, listar_revisiones, ruta_particion
+
+    df = pd.DataFrame({"x": [1]})
+    d = date(2017, 1, 2)
+    assert escribir_derivado(tmp_path, "m", d, df, {"v:01-03": 1}, available_at=date(2017, 1, 4)) == 1
+    assert escribir_derivado(tmp_path, "m", d, df, {"v:01-03": 2}, available_at=date(2017, 1, 7)) == 2
+    # Reprocesar el 01-04 con los mismos insumos de ese día: no escribe nada.
+    assert escribir_derivado(tmp_path, "m", d, df, {"v:01-03": 1}, available_at=date(2017, 1, 4)) is None
+    # Reprocesar el 01-05 (vigente: rev 1, mismos insumos): nada.
+    assert escribir_derivado(tmp_path, "m", d, df, {"v:01-03": 1}, available_at=date(2017, 1, 5)) is None
+    # El último día, con otros insumos: reemplaza su propia revisión, no agrega.
+    assert escribir_derivado(tmp_path, "m", d, df, {"v:01-03": 3}, available_at=date(2017, 1, 7)) == 2
+    assert list(listar_revisiones(ruta_particion(tmp_path, "m", d))) == [1, 2]
+    # Un día pasado con insumos distintos a los que hubo: no se intercala.
+    with pytest.raises(RevisionFueraDeOrden):
+        escribir_derivado(tmp_path, "m", d, df, {"v:01-03": 9}, available_at=date(2017, 1, 5))

@@ -15,9 +15,10 @@ datos:
     - stores.csv
     - holidays_events.csv
 
-rutas:
-  modelos: models/
-  pronosticos: forecasts/
+
+simulacion:
+  # true: el DAG diario genera la bandeja del día con el simulador. En producción, false.
+  activa: true
 
 bandeja:
   # Simulador de la bandeja de entrada (src/laboratorio/inbox).
@@ -49,6 +50,10 @@ capas:
   bronze: data/bronze           # ingesta: lo recibido, tal cual, con todas sus revisiones
   silver: data/silver           # validación: solo las revisiones que pasan las reglas
   cuarentena: data/cuarentena   # revisiones rechazadas, con sus motivos
+  features: data/features       # predictores as-of por fecha de corte
+  pronosticos: forecasts        # pronósticos y pedidos semanales
+  seguimiento: data/monitoring  # desempeño de pronósticos y pedidos
+  modelos: models
 
 validacion:
   # Esquema por fuente (validado con pandera). Por columna: tipo, nulos permitidos y rango.
@@ -77,3 +82,31 @@ validacion:
     columnas:
       date:       {tipo: str}
       dcoilwtico: {tipo: float64, nulos: true, min: 0, max: 200}   # puede venir vacío
+
+features:
+  ventana_dias: 28            # historia usada para los predictores de cada corte
+  historia_cortes_dias: 364   # cortes pasados que se preparan en la primera corrida (para entrenar)
+
+pronostico:
+  modelo: media_dia_semana    # línea base; se reemplaza en la fase de modelado
+  horizonte_dias: 7           # días que cubre cada pronóstico/pedido
+  anticipacion_dias: 1        # el pedido del día X cubre de X+1 a X+horizonte
+
+seguimiento:
+  umbral_wape: 0.35           # alerta si el WAPE total de un pronóstico lo supera
+
+orquestacion:
+  inicio: "2017-06-30"        # primer día (carga histórica)
+  fin: "2017-08-21"           # último día con llegadas a la bandeja
+  hora: 6                     # hora UTC de las corridas
+  dia_semana_pronostico: 0    # 0 = lunes
+  reintentos: 1
+  minutos_entre_reintentos: 1
+  sensores:
+    poke_interval_s: 20
+    timeout_s: 21600
+  dags:
+    ingesta_validacion:    {frecuencia: diaria, depends_on_past: true}
+    preparacion_features:  {frecuencia: diaria, depends_on_past: false}
+    pronostico_pedido:     {frecuencia: semanal, depends_on_past: true}
+    seguimiento_desempeno: {frecuencia: diaria, depends_on_past: true}

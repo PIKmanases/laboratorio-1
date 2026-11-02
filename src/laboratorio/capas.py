@@ -21,6 +21,7 @@ completa, nunca una a medias.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -149,3 +150,77 @@ def load_as_of(
 
         dir_capa = RAIZ / cargar_config()["capas"][capa]
     return leer_asof(dir_capa, source, cutoff, desde=desde, hasta=hasta)
+
+
+# --- Particiones derivadas: linaje y reproceso -----------------------------------------
+#
+# Una partición derivada (features, pronósticos, desempeño) guarda junto a cada revisión
+# un `rev=N.linaje.json` con sus insumos: qué revisión de cada partición de entrada usó
+# y con qué parámetros. Volver a calcularla solo escribe una revisión nueva si cambió la
+# firma de esos insumos (por ejemplo, llegó un `_rev2` de un dato que usa). Repetir sin
+# cambios no escribe nada.
+
+
+def ruta_linaje(ruta_revision_: Path) -> Path:
+    """`rev=N.parquet` -> `rev=N.linaje.json`."""
+    return Path(ruta_revision_).with_suffix(".linaje.json")
+
+
+def firma(insumos: dict) -> str:
+    texto = json.dumps(insumos, sort_keys=True, default=str, ensure_ascii=False)
+    return hashlib.sha256(texto.encode()).hexdigest()[:16]
+
+
+def insumos_de(df: pd.DataFrame, nombre: str) -> dict[str, int]:
+    """Revisión usada de cada fecha de `df` (salida de `load_as_of`)."""
+    if df.empty:
+        return {}
+    pares = df[["date", "revision"]].drop_duplicates()
+    return {f"{nombre}:{d}": int(r) for d, r in sorted(pares.itertuples(index=False))}
+
+
+def leer_linaje(ruta_revision_: Path) -> dict:
+    ruta = ruta_linaje(ruta_revision_)
+    return json.loads(ruta.read_text(encoding="utf-8")) if ruta.exists() else {}
+
+
+class RevisionFueraDeOrden(RuntimeError):
+    """Se intentó agregar una revisión anterior a revisiones ya escritas de la partición."""
+
+
+def escribir_derivado(
+    dir_capa: Path, nombre: str, fecha: date, df: pd.DataFrame, insumos: dict, available_at: date
+) -> int | None:
+    """Escribe la partición derivada calculada el día `available_at`, si cambiaron sus insumos.
+
+    - Si la revisión vigente ese día (la última con `available_at <= available_at`) tiene la
+      misma firma, no escribe nada y devuelve None (idempotente).
+    - Si ese mismo día ya tenía una revisión con otra firma, la reemplaza de forma atómica.
+    - Si no, agrega la revisión siguiente. Las revisiones quedan ordenadas por `available_at`,
+      que es lo que asume `load_as_of`.
+    """
+    particion = ruta_particion(dir_capa, nombre, fecha)
+    revs = {r: (ruta, leer_linaje(ruta)) for r, ruta in listar_revisiones(particion).items()}
+    f, dia = firma(insumos), str(available_at)
+    vigentes = [r for r, (_, lin) in revs.items() if lin.get("available_at", "") <= dia]
+    if vigentes and revs[max(vigentes)][1].get("firma") == f:
+        return None
+    del_dia = [r for r in vigentes if revs[r][1].get("available_at") == dia]
+    posteriores = [r for r, (_, lin) in revs.items() if lin.get("available_at", "") > dia]
+    if del_dia and not posteriores:
+        rev = max(del_dia)
+    elif posteriores:
+        raise RevisionFueraDeOrden(
+            f"{nombre} {fecha}: ya hay revisiones calculadas después del {dia} con otros insumos; "
+            "para recalcular con otra configuración, borra la capa derivada y haz backfill desde el inicio"
+        )
+    else:
+        rev = max(revs, default=0) + 1
+    ruta = ruta_revision(dir_capa, nombre, fecha, rev)
+    df = df.assign(
+        date=fecha.isoformat(), revision=rev, available_at=pd.Timestamp(available_at), origen=f"firma:{f}"
+    )
+    # El linaje va primero: el parquet es el que marca la revisión como escrita.
+    escribir_json({"firma": f, "available_at": dia, "insumos": insumos}, ruta_linaje(ruta))
+    escribir_parquet(df, ruta)
+    return rev
