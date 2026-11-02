@@ -1,6 +1,6 @@
 # Reporte de funcionamiento y desempeño
 
-Generado con el código `50fb0a82ce` (con cambios sin commitear); datos al 2017-07-11.
+Generado con el código `fc6b929dc5`; datos al 2017-07-11.
 
 ## 1. Ejecuciones en Airflow
 
