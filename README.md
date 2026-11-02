@@ -124,20 +124,71 @@ Con el zip ya en `data/raw/kaggle/`, **`./iniciar.sh` basta**: no hay que correr
 (2017-06-30 a 2017-08-21), por eso se ejecutan con **backfill** y no con *Trigger* a secas: un *Trigger* usa la fecha de hoy, que está fuera del
 periodo, y procesaría una fecha que no corresponde.
 
+### Probar con un solo día (probado)
+
+Levanta Airflow **sin** lanzar el periodo completo y corre solo el 2017-06-30 (el primer día, que hace la carga histórica):
+
+```bash
+# 1. Airflow arriba (no incluye airflow-orquestador, que lanzaría todo el periodo)
+docker compose up -d --build postgres airflow-init airflow-apiserver airflow-scheduler airflow-dag-processor
+
+# 2. Activar el DAG y crear el backfill de un día
+docker compose exec airflow-scheduler airflow dags unpause ingesta_validacion
+docker compose exec airflow-scheduler airflow backfill create --dag-id ingesta_validacion \
+  --from-date 2017-06-30T00:00:00+00:00 --to-date 2017-06-30T23:59:59+00:00 --reprocess-behavior failed --max-active-runs 1
+```
+
+o, equivalente y con el mismo script que usa `iniciar.sh`:
+
+```bash
+docker compose run --rm -e ORQUESTAR_DAGS="ingesta_validacion" -e ORQUESTAR_INICIO=2017-06-30 -e ORQUESTAR_FIN=2017-06-30 airflow-orquestador
+```
+
+Se sigue en <http://localhost:8080> → *DAGs* → `ingesta_validacion` → *Runs*, con tres tareas: `recibir_bandeja` → `ingestar` → `validar`.
+**El primer día es el lento**: carga todo el histórico (3 M de filas de ventas). Medido en una laptop de 4 GB: `recibir_bandeja` ~2 min,
+`ingestar` ~4 min y `validar` ~7 min (unos 13 min en total). Cada día siguiente tarda segundos. Para ver una dependencia entre DAGs en
+el mismo día, agrega `seguimiento_desempeno` (tarda ~10 s):
+
+```bash
+docker compose run --rm -e ORQUESTAR_DAGS="seguimiento_desempeno" -e ORQUESTAR_INICIO=2017-06-30 -e ORQUESTAR_FIN=2017-06-30 airflow-orquestador
+```
+
+Al terminar deben existir `data/bronze/` y `data/silver/` (con `ventas`, `transacciones`, `petroleo`), y las dos corridas en verde:
+
+```bash
+docker compose exec postgres psql -U airflow -d airflow -c "select dag_id, logical_date, state from dag_run;"
+ls data/silver/ventas | tail -2        # fecha=2017-06-28, fecha=2017-06-29 (la venta del 06-30 llega el 07-01)
+```
+
+### Otros comandos
+
 | Quiero… | Comando |
 |---|---|
 | Relanzar todo (solo reintenta lo fallido, no repite lo que ya está bien) | `docker compose run --rm airflow-orquestador` |
-| Correr un DAG en un rango de fechas | `docker compose exec airflow-scheduler airflow backfill create --dag-id ingesta_validacion --from-date 2017-07-03 --to-date 2017-07-10 --reprocess-behavior failed --max-active-runs 1` |
+| Correr un DAG en un rango de fechas | `docker compose exec airflow-scheduler airflow backfill create --dag-id ingesta_validacion --from-date 2017-07-03T00:00:00+00:00 --to-date 2017-07-10T23:59:59+00:00 --reprocess-behavior failed --max-active-runs 1` |
 | Rehacer corridas que ya estaban en verde | el mismo comando con `--reprocess-behavior completed` |
 | Pausar / activar un DAG | `docker compose exec airflow-scheduler airflow dags pause ingesta_validacion` / `... dags unpause ...` |
 | Ver logs de una tarea | UI → DAG → corrida → tarea → *Log* |
 | Ver por qué falló el servicio de arranque | `docker compose logs airflow-orquestador` |
 
 Desde la UI: abre el DAG y usa **Backfill** (no *Trigger*), con las fechas del periodo.
+**Las fechas del backfill llevan hora**: los DAGs corren a las 06:00 UTC, así que `--to-date 2017-06-30` (medianoche) deja el día fuera y
+Airflow responde `No runs to create`; usa `--to-date 2017-06-30T23:59:59+00:00`.
 
 Orden y dependencias, para que no te sorprenda: `ingesta_validacion` es la base (cada día exige que el anterior haya terminado,
 `depends_on_past`); `preparacion_features` y `seguimiento_desempeno` esperan a su validación con sensores; `pronostico_pedido` corre solo los lunes y
 espera los features de ese día. Si lanzas a mano un DAG de más abajo antes que los de arriba, simplemente espera (sensores, hasta 6 h) en lugar de fallar.
+
+### Si algo no aparece o no corre
+
+| Síntoma | Causa y solución |
+|---|---|
+| `airflow dags list` muestra menos de 4 DAGs, o `ModuleNotFoundError: No module named 'lightgbm'` | La imagen de Docker es anterior a las dependencias actuales. `docker compose up -d --build` (lo hace `iniciar.sh`). |
+| El dag-processor dice `Found 0 files` | Cambiaste de rama con `git checkout` con Docker corriendo y el contenedor quedó mirando una carpeta vieja. `docker compose up -d --force-recreate airflow-dag-processor airflow-scheduler airflow-apiserver`. |
+| `No runs to create for Dag ...` | Rango de fechas sin hora (ver arriba). |
+| `Another backfill is running for Dag ...` | Hay un backfill abierto. Espera a que termine o cancélalo en la UI (*Backfills*). |
+| `airflow-dag-processor` aparece *unhealthy* con carga alta | Es el chequeo, no el proceso: `docker compose ps` y los logs del dag-processor lo confirman. Se recupera solo al bajar la carga. |
+| Una corrida queda en rojo | UI → corrida → tarea → *Log*. Se reintenta sola 1 vez; si persiste, corrige y vuelve a lanzar el backfill (solo repite lo fallido). |
 
 Detener y reiniciar:
 
