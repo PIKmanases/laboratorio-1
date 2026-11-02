@@ -1,7 +1,9 @@
 """Ingesta idempotente a la capa bronze.
 
 - **Carga histórica:** los datos del zip con fecha <= fecha de corte entran como
-  revisión 1, con `available_at = fecha_corte`.
+  revisión 1, con `available_at = fecha + retraso de su fuente` (cuándo se habrían
+  conocido si el sistema hubiera estado operando). Así hay historia as-of para
+  entrenar y hacer backtesting.
 - **Bandeja:** cada archivo `<fuente>_<fecha>[_revN].csv` entra tal cual a
   `bronze/<fuente>/fecha=<fecha>/rev=<N>.parquet` con
   `available_at = fecha_proceso` (el día en que se conoció). Cada fila
@@ -16,7 +18,7 @@ from __future__ import annotations
 
 import zipfile
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -52,7 +54,12 @@ def _escribir_revision(
 
 
 def cargar_historico(
-    ruta_zip: Path, dir_bronze: Path, archivos: dict[str, str], referencias: list[str], fecha_corte: date
+    ruta_zip: Path,
+    dir_bronze: Path,
+    archivos: dict[str, str],
+    referencias: list[str],
+    fecha_corte: date,
+    retrasos: dict[str, int],
 ) -> Resumen:
     resumen = Resumen()
     with zipfile.ZipFile(ruta_zip) as z:
@@ -70,7 +77,8 @@ def cargar_historico(
             for fecha_txt, dia in df.groupby("date", sort=True):
                 fecha = date.fromisoformat(fecha_txt)
                 if 1 not in revisiones(ruta_particion(dir_bronze, fuente, fecha)):
-                    _escribir_revision(dir_bronze, fuente, fecha, 1, dia, f"zip:{archivo}", fecha_corte)
+                    disponible = fecha + timedelta(days=retrasos[fuente])
+                    _escribir_revision(dir_bronze, fuente, fecha, 1, dia, f"zip:{archivo}", disponible)
                     resumen.sumar(fuente)
             # La marca se escribe al final: si el proceso se corta, la próxima corrida retoma.
             escribir_json({"fecha_corte": fecha_corte.isoformat(), "archivo": archivo}, marca)
@@ -95,12 +103,13 @@ def ingestar(
     archivos: dict[str, str],
     referencias: list[str],
     fecha_corte: date,
+    retrasos: dict[str, int],
     fecha_proceso: date,
 ) -> tuple[Resumen, Resumen]:
     """Corrida diaria de ingesta para el día `fecha_proceso`."""
     if fecha_proceso < fecha_corte:
         raise ValueError(f"fecha_proceso {fecha_proceso} es anterior a la fecha de corte {fecha_corte}")
-    historico = cargar_historico(ruta_zip, dir_bronze, archivos, referencias, fecha_corte)
+    historico = cargar_historico(ruta_zip, dir_bronze, archivos, referencias, fecha_corte, retrasos)
     bandeja = ingestar_bandeja(dir_bandeja, dir_bronze, list(archivos), fecha_proceso)
     return historico, bandeja
 
@@ -115,4 +124,5 @@ def desde_config(cfg: dict, raiz: Path) -> dict:
         "archivos": {n: f["archivo"] for n, f in b["fuentes"].items()},
         "referencias": cfg["datos"]["referencias"],
         "fecha_corte": date.fromisoformat(b["fecha_corte"]),
+        "retrasos": {n: f["retraso_dias"] for n, f in b["fuentes"].items()},
     }
