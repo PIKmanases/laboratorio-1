@@ -128,7 +128,8 @@ services:
       airflow-scheduler:
         condition: service_healthy
       airflow-dag-processor:
-        condition: service_healthy
+        # Solo iniciado: su healthcheck puede marcarse unhealthy bajo carga; el script espera a que los DAGs aparezcan.
+        condition: service_started
 
 volumes:
   postgres-db:
