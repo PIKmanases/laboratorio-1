@@ -270,7 +270,7 @@ def seccion_manifiestos(cfg: dict) -> str:
 def generar(cfg: dict | None = None, asof: date | None = None, url_airflow: str | None = None) -> str:
     cfg = cfg or cargar_config()
     asof = asof or _fecha_asof(cfg)
-    git = manifiesto.estado_git()
+    git = manifiesto.estado_git(ignorar=("docs/evidencia",))  # el propio reporte no cuenta como cambio
     partes = [
         "# Reporte de funcionamiento y desempeño",
         f"Generado con el código `{(git['sha'] or 'desconocido')[:10]}`"
